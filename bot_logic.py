@@ -17,9 +17,63 @@ def load_name_list(filepath):
 
 
 def save_name_list(name_dict, filepath):
-    """Save member name-to-slack-id mapping to JSON file."""
-    with open(filepath, 'w', encoding='utf-8') as f:
-        json.dump(name_dict, f, indent=4)
+    """Save member name-to-slack-id mapping to JSON file. Returns (success: bool)."""
+    try:
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(name_dict, f, indent=4)
+        return True
+    except OSError:
+        return False
+
+
+def parse_name_list_json(raw_content) -> dict:
+    """
+    Parse flexible JSON formats into a standardized {name: slack_id} dictionary.
+    Supports:
+      - Direct dict: {"audrey": "U0123...", "carol": "U0456..."}
+      - Object with members list: {"members": [{"name": "audrey", "id": "U0123..."}, ...]}
+      - Direct list of dicts: [{"name": "audrey", "slack_id": "U0123..."}, ...]
+    """
+    if isinstance(raw_content, (bytes, bytearray)):
+        raw_content = raw_content.decode("utf-8")
+    if isinstance(raw_content, str):
+        data = json.loads(raw_content)
+    else:
+        data = raw_content
+
+    result = {}
+    if isinstance(data, dict):
+        if "members" in data and isinstance(data["members"], list):
+            items = data["members"]
+        elif "users" in data and isinstance(data["users"], list):
+            items = data["users"]
+        elif "roster" in data and isinstance(data["roster"], list):
+            items = data["roster"]
+        else:
+            for k, v in data.items():
+                if isinstance(v, str):
+                    result[str(k).strip().lower()] = v.strip()
+                elif isinstance(v, dict):
+                    sid = v.get("id") or v.get("slack_id") or v.get("Slack ID") or ""
+                    result[str(k).strip().lower()] = str(sid).strip()
+            return result
+    elif isinstance(data, list):
+        items = data
+    else:
+        return result
+
+    for item in items:
+        if isinstance(item, dict):
+            name = (
+                item.get("name") or item.get("Name") or item.get("member") or item.get("Member") or item.get("user") or ""
+            )
+            sid = (
+                item.get("slack_id") or item.get("Slack ID") or item.get("id") or item.get("ID") or item.get("user_id") or ""
+            )
+            if name:
+                result[str(name).strip().lower()] = str(sid).strip()
+
+    return result
 
 
 def get_available_spreadsheets(folder="spreadsheets"):

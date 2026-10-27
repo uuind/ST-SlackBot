@@ -76,27 +76,55 @@ def load_config(config_file=CONFIG_FILE):
 
 
 def save_config(config_dict, config_file=CONFIG_FILE):
-    """Save configuration dictionary to config.json and reload in-memory variables."""
-    with open(config_file, 'w', encoding='utf-8') as f:
-        json.dump(config_dict, f, indent=2)
-    return load_config(config_file=config_file)
+    """Save configuration dictionary to config.json and reload in-memory variables.
+    Returns (config_dict, saved_to_disk: bool).
+    """
+    global slack_api_url, name_filepath, spreadsheet_folder, form_file, form_filepath, search_list, mode
+    saved_to_disk = False
+    try:
+        with open(config_file, 'w', encoding='utf-8') as f:
+            json.dump(config_dict, f, indent=2)
+        saved_to_disk = True
+    except OSError:
+        saved_to_disk = False
+
+    slack_api_url = config_dict.get('slack', {}).get('api_url', slack_api_url)
+    name_filepath = config_dict.get('file', {}).get('name_list', name_filepath)
+    spreadsheet_folder = config_dict.get('file', {}).get('spreadsheet_folder', spreadsheet_folder)
+    form_file = config_dict.get('file', {}).get('form_file', form_file)
+    form_filepath = os.path.join(spreadsheet_folder, form_file) if form_file else ""
+    search_list = config_dict.get('search', {}).get('terms', search_list)
+    mode = config_dict.get('mode', mode)
+
+    return config_dict, saved_to_disk
 
 
 def save_token(token, secrets_file=SECRETS_FILE):
-    """Save the Slack Bot Token to .streamlit/secrets.toml and reload."""
+    """Save the Slack Bot Token to .streamlit/secrets.toml and reload in-memory variable.
+    Returns (clean_token, saved_to_disk: bool).
+    """
     clean_token = token.strip()
-    os.makedirs(os.path.dirname(secrets_file), exist_ok=True)
-    with open(secrets_file, 'w', encoding='utf-8') as f:
-        f.write(f'SLACK_BOT_TOKEN = "{clean_token}"\n')
-
-    # Also keep token.env in sync if it exists
-    if os.path.exists(ENV_FILE):
-        with open(ENV_FILE, 'w', encoding='utf-8') as f:
-            f.write(f"SLACK_BOT_TOKEN={clean_token}\n")
-
     global slack_token
     slack_token = clean_token
-    return slack_token
+
+    saved_to_disk = False
+    try:
+        os.makedirs(os.path.dirname(secrets_file), exist_ok=True)
+        with open(secrets_file, 'w', encoding='utf-8') as f:
+            f.write(f'SLACK_BOT_TOKEN = "{clean_token}"\n')
+
+        # Also keep token.env in sync if it exists and is writable
+        if os.path.exists(ENV_FILE):
+            try:
+                with open(ENV_FILE, 'w', encoding='utf-8') as f:
+                    f.write(f"SLACK_BOT_TOKEN={clean_token}\n")
+            except OSError:
+                pass
+        saved_to_disk = True
+    except OSError:
+        saved_to_disk = False
+
+    return slack_token, saved_to_disk
 
 
 # Initial load upon import

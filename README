@@ -20,6 +20,24 @@ Tool for sending out personal feedback and notes after practice performances.
 
 ---
 
+## 🔐 User Authentication (Username & Password)
+
+The app restricts access to authorized users via matching username and password credentials:
+- **Configuring Accounts**:
+  In `.streamlit/secrets.toml` (locally) or Streamlit Cloud Secrets (**App Settings → Secrets**):
+  ```toml
+  [users]
+  admin = "admin_password"
+  audrey = "audrey_password"
+  pd_lead = "pd_team_password"
+  ```
+- **Local Fallback**:
+  If no users are configured in secrets, the default fallback is username `admin` with password `taiko`.
+- **Session Unlock**:
+  Signing in with a matching username and password unlocks the app for the duration of the browser session. Clicking **🚪 Log Out** locks the app again.
+
+---
+
 ## 🚀 Running the Streamlit GUI
 
 Launch the interactive web application:
@@ -28,13 +46,12 @@ Launch the interactive web application:
 streamlit run app.py
 ```
 
-### GUI Features:
-- **Spreadsheet Upload / Selection**: Upload `.xlsx` spreadsheets or select directly from the `spreadsheets/` directory.
-- **Group & Member Management**: Easily assign members to performance groups with multi-select dropdowns, add/remove names on the fly, or use the **"Auto-Detect from Comments"** feature to automatically discover members mentioned in the feedback.
-- **Sample Comment Preview**: Inspect the exact Slack formatted message before dispatching, preview random samples, view section breakdowns, and audit all members at once.
-- **Safe Dispatch**: Send a single test message first, uncheck members from dispatch, and monitor real-time delivery with progress bar and audit logs.
-- **Mode Switching**: Switch effortlessly between **PD Mode** (Performance Director group/song notes) and **LC Mode** (Leadership Committee individual notes).
-- **Configuration & Directory Editor**: Edit `config.json`, search terms, Slack settings, and member Slack IDs with an interactive in-browser spreadsheet table.
+### GUI Workflow:
+1. **⚙️ Step 1: Configuration & Roster**: Upload your `config.json` and member roster JSON (`name_list.json`), edit settings or search terms, test Slack authentication, and manage or download member directories.
+2. **📁 Step 2: Spreadsheet & Setup**: Upload `.xlsx` performance forms, leverage automatic PD vs LC format detection, view headers and sample rows.
+3. **👥 Step 3: Group & Member Management**: Review detected groups, assign members with intuitive multi-selects (supporting custom-typed additions), and use **"Auto-Detect All"** or per-group detection to discover members mentioned in the feedback.
+4. **💬 Step 4: Preview Sample Comments**: Inspect authentic Slack DM previews with simulated dark mode, view section breakdowns, and verify member formatting.
+5. **🚀 Step 5: Review & Send**: Send a test message first to verify authentication, filter recipients, and dispatch live Slack feedback with progress tracking and delivery logs.
 
 ---
 

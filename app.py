@@ -9,6 +9,7 @@ from pathlib import Path
 
 import config
 import bot_logic
+import auth
 
 # -----------------------------------------------------------------------------
 # Streamlit Page Setup
@@ -105,12 +106,24 @@ if "selected_recipient_idx" not in st.session_state:
 if "has_assigned_names" not in st.session_state:
     st.session_state["has_assigned_names"] = False
 
+if "slack_token" not in st.session_state:
+    st.session_state["slack_token"] = config.slack_token
+
+if "name_list_source" not in st.session_state:
+    st.session_state["name_list_source"] = config.name_filepath
+
 
 # -----------------------------------------------------------------------------
 # Helper Functions
 # -----------------------------------------------------------------------------
+def get_active_token():
+    """Get active Slack bot token from session state or config."""
+    return st.session_state.get("slack_token") or config.slack_token
+
+
 def refresh_name_list():
     st.session_state["name_dict"] = bot_logic.load_name_list(config.name_filepath)
+    st.session_state["name_list_source"] = config.name_filepath
 
 
 def clear_group_gui_state():
@@ -160,9 +173,63 @@ def trigger_parse_comments(sheet):
 
 
 # -----------------------------------------------------------------------------
-# Sidebar: Mode Switcher & Slack Status
+# User Authentication Screen (Access Gate)
+# -----------------------------------------------------------------------------
+if not st.session_state.get("authenticated"):
+    st.markdown('<div class="main-title">🥁 ST SlackBot</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sub-title">Personal Feedback Dispatcher for Practice Performances & Committee Notes</div>', unsafe_allow_html=True)
+    st.markdown("---")
+
+    col_l1, col_l2, col_l3 = st.columns([1, 2, 1])
+    with col_l2:
+        st.markdown("### 🔐 User Login")
+        st.caption("Please sign in with your authorized username and password.")
+
+        with st.form("login_form"):
+            username_input = st.text_input("Username", placeholder="Enter username")
+            password_input = st.text_input("Password", type="password", placeholder="Enter password")
+            submit_login = st.form_submit_button("🚀 Sign In", type="primary", use_container_width=True)
+
+            if submit_login:
+                ok, err_msg = auth.verify_credentials(username_input, password_input)
+                if ok:
+                    st.session_state["authenticated"] = True
+                    st.session_state["user_label"] = username_input.strip()
+                    st.toast(f"Welcome, {st.session_state['user_label']}!", icon="👋")
+                    st.rerun()
+                else:
+                    st.error(err_msg)
+
+        with st.expander("ℹ️ Configuring user accounts on Streamlit Cloud", expanded=False):
+            st.markdown("""
+            In your Streamlit Cloud **App Settings → Secrets** (or `.streamlit/secrets.toml` locally):
+            ```toml
+            [users]
+            admin = "admin_password"
+            audrey = "audrey_password"
+            pd_lead = "pd_team_password"
+            ```
+            *(Default local fallback: username `admin` / password `taiko`)*
+            """)
+
+    st.stop()
+
+
+# -----------------------------------------------------------------------------
+# Sidebar: User Info, Mode Switcher & Slack Status
 # -----------------------------------------------------------------------------
 with st.sidebar:
+    u_label = st.session_state.get("user_label", "Admin")
+    c_u1, c_u2 = st.columns([2, 1])
+    with c_u1:
+        st.markdown(f"**👤 User:** `{u_label}`")
+    with c_u2:
+        if st.button("🚪 Log Out", key="sidebar_logout", use_container_width=True):
+            st.session_state["authenticated"] = False
+            clear_group_gui_state()
+            st.rerun()
+
+    st.markdown("---")
     st.markdown("### 🎛️ Mode & Quick Controls")
 
     # Mode Selector
@@ -201,15 +268,16 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown("### 🔌 Slack Bot Connection")
-    token_preview = f"...{config.slack_token[-8:]}" if len(config.slack_token) > 8 else (
-        "Configured" if config.slack_token else "Missing"
+    active_tok = get_active_token()
+    token_preview = f"...{active_tok[-8:]}" if len(active_tok) > 8 else (
+        "Configured" if active_tok else "Missing"
     )
     st.write(f"**Token:** `{token_preview}`")
     st.write(f"**API URL:** `{config.slack_api_url}`")
 
     if st.button("🔍 Test Slack Auth", use_container_width=True):
         with st.spinner("Testing Slack connection..."):
-            ok, res = bot_logic.test_slack_token(config.slack_token, config.slack_api_url)
+            ok, res = bot_logic.test_slack_token(active_tok, config.slack_api_url)
             if ok:
                 st.success(f"Connected to **{res.get('team')}** as bot **@{res.get('user')}**!")
             else:
@@ -223,32 +291,242 @@ with st.sidebar:
 # -----------------------------------------------------------------------------
 # Main Header
 # -----------------------------------------------------------------------------
-col_title, col_badge = st.columns([4, 1])
+col_title, col_badge = st.columns([3, 2])
 with col_title:
-    st.markdown('<div class="main-title">🥁 ST SlackBot Feedback Dispatcher</div>', unsafe_allow_html=True)
-    st.markdown('<div class="sub-title">Upload performance spreadsheets, manage groups & members, preview sample comments, and dispatch directly to Slack.</div>', unsafe_allow_html=True)
+    st.markdown('<div class="main-title">ST SlackBot v2</div>', unsafe_allow_html=True)
+    u_label = st.session_state.get("user_label", "Admin")
+    st.markdown(f'<div class="sub-title">Session: **@{u_label}** • Active: `{config.mode} Mode`</div>', unsafe_allow_html=True)
 
 with col_badge:
-    mode_badge_html = f'<div style="text-align: right; margin-top: 15px;"><span class="{"badge-pd" if config.mode == "PD" else "badge-lc"}">{config.mode} MODE</span></div>'
-    st.markdown(mode_badge_html, unsafe_allow_html=True)
+    c_b1, c_b2 = st.columns([1, 1])
+    with c_b1:
+        mode_badge_html = f'<div style="text-align: right; margin-top: 15px;"><span class="{"badge-pd" if config.mode == "PD" else "badge-lc"}">{config.mode} MODE</span></div>'
+        st.markdown(mode_badge_html, unsafe_allow_html=True)
+    with c_b2:
+        st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
+        if st.button("🚪 Log Out", key="header_logout", use_container_width=True):
+            st.session_state["authenticated"] = False
+            clear_group_gui_state()
+            st.rerun()
 
 # -----------------------------------------------------------------------------
 # Main Navigation Tabs
 # -----------------------------------------------------------------------------
-tab_upload, tab_groups, tab_preview, tab_send, tab_config = st.tabs([
-    "📁 1. Spreadsheet & Setup",
-    "👥 2. Group & Member Management",
-    "💬 3. Preview Sample Comments",
-    "🚀 4. Review & Send",
-    "⚙️ 5. Configuration & Names"
+tab_config, tab_upload, tab_groups, tab_preview, tab_send = st.tabs([
+    "⚙️ 1. Configuration & Roster",
+    "📁 2. Spreadsheet & Setup",
+    "👥 3. Group & Member Management",
+    "💬 4. Preview Sample Comments",
+    "🚀 5. Review & Send"
 ])
 
 
 # =============================================================================
-# TAB 1: SPREADSHEET & SETUP
+# TAB 1: CONFIGURATION & ROSTER
+# =============================================================================
+with tab_config:
+    st.subheader("⚙️ Step 1: Configuration & Member Roster")
+    st.markdown(
+        "Set up your bot parameters, search terms, Slack token, and member roster. "
+        "You can upload existing `.json` files or adjust settings directly in the fields below."
+    )
+
+    # Top File Uploaders Row (config.json & member directory JSON)
+    c_up_cfg, c_up_mem = st.columns(2)
+    with c_up_cfg:
+        st.markdown("##### 📄 Upload `config.json` (Optional)")
+        uploaded_cfg_file = st.file_uploader(
+            "Upload Configuration JSON (`config.json`)",
+            type=["json"],
+            key="upload_config_file",
+            help="Upload a config.json file to update mode, search terms, and Slack settings."
+        )
+        if uploaded_cfg_file is not None:
+            cfg_sig = f"{uploaded_cfg_file.name}_{uploaded_cfg_file.size}"
+            if st.session_state.get("last_uploaded_cfg_sig") != cfg_sig:
+                try:
+                    cfg_data = json.loads(uploaded_cfg_file.getvalue().decode("utf-8"))
+                    if isinstance(cfg_data, dict):
+                        st.session_state["last_uploaded_cfg_sig"] = cfg_sig
+                        config.save_config(cfg_data)
+                        st.toast(f"Loaded configuration from {uploaded_cfg_file.name}!", icon="⚙️")
+                        st.rerun()
+                except Exception as e:
+                    st.error(f"Error parsing config.json: {e}")
+
+    with c_up_mem:
+        st.markdown("##### 👥 Upload Member Roster (Optional)")
+        uploaded_name_file = st.file_uploader(
+            "Upload Member Roster (`name_list.json` / roster)",
+            type=["json"],
+            key="upload_name_file",
+            help="Upload member names and Slack IDs. Flexible JSON formats supported."
+        )
+        if uploaded_name_file is not None:
+            name_sig = f"{uploaded_name_file.name}_{uploaded_name_file.size}"
+            if st.session_state.get("last_uploaded_name_sig") != name_sig:
+                try:
+                    parsed_dict = bot_logic.parse_name_list_json(uploaded_name_file.getvalue())
+                    if parsed_dict:
+                        st.session_state["name_dict"] = parsed_dict
+                        st.session_state["name_list_source"] = uploaded_name_file.name
+                        st.session_state["last_uploaded_name_sig"] = name_sig
+                        bot_logic.save_name_list(parsed_dict, config.name_filepath)
+                        st.toast(f"Imported {len(parsed_dict)} members from {uploaded_name_file.name}!", icon="📥")
+                        st.rerun()
+                    else:
+                        st.error("Uploaded JSON was empty or did not contain recognizable member names.")
+                except Exception as e:
+                    st.error(f"Error parsing roster JSON: {e}")
+
+    st.markdown("---")
+
+    cfg = config.load_config()
+
+    # Section 1: Mode & Settings
+    c_cfg1, c_cfg2 = st.columns(2)
+
+    with c_cfg1:
+        st.markdown("##### 🎭 Mode Setting")
+        mode_radio = st.radio(
+            "Bot Mode",
+            ["PD", "LC"],
+            index=0 if config.mode == "PD" else 1,
+            help="PD = Performance Director (Group/Song & Individual notes)\nLC = Leadership Committee (EOQM/EOYM individual notes)"
+        )
+
+        st.markdown("##### 📁 File & Folder Settings")
+        cfg_name_file = st.text_input("Name List JSON File", value=config.name_filepath)
+        cfg_folder = st.text_input("Spreadsheets Folder", value=config.spreadsheet_folder)
+        cfg_form_file = st.text_input("Default Form File", value=config.form_file)
+
+    with c_cfg2:
+        st.markdown("##### 🔍 Search Terms (PD Mode)")
+        st.markdown("Keywords used to detect group and individual columns in the spreadsheet:")
+        terms_text = st.text_area(
+            "Search Terms (comma-separated)",
+            value=", ".join(config.search_list),
+            help="Columns matching any of these terms will be scanned for group feedback."
+        )
+        updated_search_terms = [t.strip() for t in terms_text.split(",") if t.strip()]
+
+        st.markdown("##### 🔌 Slack API Settings")
+        cfg_api_url = st.text_input("Slack API URL", value=config.slack_api_url)
+        cfg_token = st.text_input(
+            "Slack Bot Token (SLACK_BOT_TOKEN)",
+            value=get_active_token(),
+            type="password",
+            help="Slack bot token starting with xoxb-. On Streamlit Cloud, add this in App Settings → Secrets."
+        )
+
+        col_token_save, col_token_test = st.columns(2)
+        with col_token_save:
+            if st.button("💾 Apply / Save Token", use_container_width=True, help="Applies to current session and saves to .streamlit/secrets.toml if writable"):
+                clean_tok, saved_to_disk = config.save_token(cfg_token)
+                st.session_state["slack_token"] = clean_tok
+                if saved_to_disk:
+                    st.toast("Saved Slack token to .streamlit/secrets.toml!", icon="🔑")
+                else:
+                    st.info("ℹ️ **Token active for this session!** (Running in a read-only environment like Streamlit Cloud). To persist permanently, open your **Streamlit Cloud Dashboard → App Settings → Secrets** and add `SLACK_BOT_TOKEN = \"...\"`.")
+        with col_token_test:
+            if st.button("🔍 Test Token Auth", use_container_width=True):
+                ok, res = bot_logic.test_slack_token(cfg_token, cfg_api_url)
+                if ok:
+                    st.success(f"Auth OK: @{res.get('user')} on {res.get('team')}")
+                else:
+                    st.error(f"Auth error: {res}")
+
+    if st.button("💾 Save Settings to config.json", type="primary", use_container_width=True):
+        mode_changed = mode_radio != config.mode
+        new_config = {
+            "slack": {
+                "api_url": cfg_api_url
+            },
+            "file": {
+                "name_list": cfg_name_file,
+                "spreadsheet_folder": cfg_folder,
+                "form_file": cfg_form_file
+            },
+            "search": {
+                "terms": updated_search_terms
+            },
+            "mode": mode_radio
+        }
+        _, saved_ok = config.save_config(new_config)
+        if mode_changed:
+            st.session_state["parsed_comments"] = {}
+            st.session_state["full_messages"] = {}
+            st.session_state["selected_recipient_idx"] = 0
+        if saved_ok:
+            st.toast("Saved configuration to config.json!", icon="💾")
+        else:
+            st.info("ℹ️ Settings applied to active session (local filesystem is read-only).")
+        st.rerun()
+
+    st.markdown("---")
+
+    # Section 2: Member Name List Editor & Downloader
+    c_sec_hdr, c_sec_dn = st.columns([3, 2])
+    with c_sec_hdr:
+        st.markdown("##### 👥 Member Name & Slack ID Directory")
+        source_label = st.session_state.get("name_list_source", config.name_filepath)
+        st.caption(f"Active Directory Source: `{source_label}` ({len(st.session_state['name_dict'])} members loaded)")
+    with c_sec_dn:
+        json_export = json.dumps(st.session_state["name_dict"], indent=2)
+        st.download_button(
+            "📥 Download Directory (JSON)",
+            data=json_export,
+            file_name=st.session_state.get("name_list_source", "name_list.json"),
+            mime="application/json",
+            use_container_width=True,
+            help="Download the current member name & Slack ID directory as a JSON file"
+        )
+
+    name_records = [
+        {"Name": k, "Slack ID": v}
+        for k, v in st.session_state["name_dict"].items()
+    ]
+    df_names = pd.DataFrame(name_records)
+
+    edited_df = st.data_editor(
+        df_names,
+        num_rows="dynamic",
+        use_container_width=True,
+        column_config={
+            "Name": st.column_config.TextColumn("Member Name (lowercase)", required=True),
+            "Slack ID": st.column_config.TextColumn("Slack User ID (e.g. U0XXXXXXX)", required=True)
+        }
+    )
+
+    c_save_names, c_reload_names = st.columns([2, 1])
+    with c_save_names:
+        if st.button("💾 Apply & Save Directory", type="primary", use_container_width=True):
+            updated_dict = {}
+            for _, row in edited_df.iterrows():
+                name_val = str(row["Name"]).strip().lower() if pd.notna(row["Name"]) else ""
+                id_val = str(row["Slack ID"]).strip() if pd.notna(row["Slack ID"]) else ""
+                if name_val:
+                    updated_dict[name_val] = id_val
+
+            st.session_state["name_dict"] = updated_dict
+            saved_ok = bot_logic.save_name_list(updated_dict, config.name_filepath)
+            if saved_ok:
+                st.toast(f"Saved {len(updated_dict)} members to {config.name_filepath}!", icon="👥")
+            else:
+                st.toast(f"Updated {len(updated_dict)} members in active session!", icon="👥")
+            st.rerun()
+
+    with c_reload_names:
+        if st.button("🔄 Reload from Default File", use_container_width=True):
+            refresh_name_list()
+            st.rerun()
+
+
+# =============================================================================
+# TAB 2: SPREADSHEET & SETUP
 # =============================================================================
 with tab_upload:
-    st.subheader("Spreadsheet Source")
+    st.subheader("📁 Step 2: Spreadsheet Selection & Setup")
 
     col_src1, col_src2 = st.columns(2)
     with col_src1:
@@ -415,11 +693,11 @@ with tab_upload:
 
 
 # =============================================================================
-# TAB 2: GROUP & MEMBER MANAGEMENT
+# TAB 3: GROUP & MEMBER MANAGEMENT
 # =============================================================================
 with tab_groups:
     if "sheet" not in st.session_state:
-        st.warning("Please upload or select a spreadsheet in Tab 1 first.")
+        st.warning("Please upload or select a spreadsheet in Step 2 (Spreadsheet & Setup) first.")
     else:
         sheet = st.session_state["sheet"]
         headers = st.session_state.get("headers", bot_logic.get_sheet_headers(sheet))
@@ -645,7 +923,7 @@ with tab_groups:
                     st.error(
                         f"❌ **{len(missing_slack)} assigned member(s) do not have a Slack User ID in `name_list.json`:** "
                         + ", ".join([f"`{m}`" for m in missing_slack])
-                        + " *(Add their Slack ID in Tab 5 to deliver Slack messages)*"
+                        + " *(Add their Slack ID in Step 1 to deliver Slack messages)*"
                     )
 
             # Expandable Membership Table
@@ -839,10 +1117,10 @@ with tab_groups:
 
 
 # =============================================================================
-# TAB 3: PREVIEW SAMPLE COMMENTS
+# TAB 4: PREVIEW SAMPLE COMMENTS
 # =============================================================================
 with tab_preview:
-    st.subheader("💬 Sample & Comment Preview")
+    st.subheader("💬 Step 4: Sample & Comment Preview")
     st.markdown("Review the exact message formatted for each member before dispatching.")
 
     # Automatically parse if not already parsed or if parsed under a different mode
@@ -853,7 +1131,7 @@ with tab_preview:
     full_msgs = st.session_state.get("full_messages", {})
 
     if not full_msgs:
-        st.warning("No comments generated yet. Please ensure members are assigned in Tab 2 and click 'Generate Comments'.")
+        st.warning("No comments generated yet. Please ensure members are assigned in Step 3 and click 'Generate Comments'.")
     else:
         recipients = sorted(list(full_msgs.keys()))
 
@@ -869,7 +1147,7 @@ with tab_preview:
         col_m4.metric("Avg Message Length", f"{avg_len} chars")
 
         if missing_ids:
-            st.warning(f"⚠️ The following {len(missing_ids)} members have comments but no Slack ID in name_list.json: {', '.join(missing_ids)}. You can add their Slack IDs in Tab 5.")
+            st.warning(f"⚠️ The following {len(missing_ids)} members have comments but no Slack ID in name_list.json: {', '.join(missing_ids)}. You can add their Slack IDs in Step 1 (Configuration & Roster).")
 
         st.markdown("---")
 
@@ -950,15 +1228,15 @@ with tab_preview:
 
 
 # =============================================================================
-# TAB 4: REVIEW & SEND
+# TAB 5: REVIEW & SEND
 # =============================================================================
 with tab_send:
-    st.subheader("🚀 Review & Dispatch Messages to Slack")
+    st.subheader("🚀 Step 5: Review & Dispatch Messages to Slack")
     st.markdown("Send verified personal feedback directly to members via the Slack Bot.")
 
     full_msgs = st.session_state.get("full_messages", {})
     if not full_msgs:
-        st.warning("No comments ready to send. Please configure groups in Tab 2 and preview in Tab 3.")
+        st.warning("No comments ready to send. Please configure groups in Step 3 and preview in Step 4.")
     else:
         recipients = sorted(list(full_msgs.keys()))
 
@@ -1017,8 +1295,9 @@ with tab_send:
                 else:
                     sample_msg = full_msgs[recipients[0]]
                     with st.spinner("Sending test message..."):
+                        active_tok = get_active_token()
                         ok, res = bot_logic.send_slack_message(
-                            config.slack_token, config.slack_api_url, test_slack_id, sample_msg
+                            active_tok, config.slack_api_url, test_slack_id, sample_msg
                         )
                         if ok:
                             st.success(f"Test message sent successfully! (ts: {res})")
@@ -1046,6 +1325,7 @@ with tab_send:
 
             success_count = 0
             fail_count = 0
+            active_tok = get_active_token()
 
             with log_container:
                 for idx, person in enumerate(confirmed_recipients):
@@ -1060,7 +1340,7 @@ with tab_send:
                         continue
 
                     ok, res = bot_logic.send_slack_message(
-                        config.slack_token, config.slack_api_url, slack_id, msg_body
+                        active_tok, config.slack_api_url, slack_id, msg_body
                     )
 
                     if ok:
@@ -1077,123 +1357,3 @@ with tab_send:
                 st.success(f"🎉 Successfully delivered feedback to all {success_count} members!")
             else:
                 st.warning(f"Completed with {success_count} successes and {fail_count} failures. See log above.")
-
-
-# =============================================================================
-# TAB 5: CONFIGURATION & NAMES
-# =============================================================================
-with tab_config:
-    st.subheader("⚙️ Configuration & Member Management")
-    st.markdown("Easily modify settings from `config.json`, manage search terms, and edit member Slack IDs.")
-
-    cfg = config.load_config()
-
-    # Section 1: Mode & Search Terms
-    c_cfg1, c_cfg2 = st.columns(2)
-
-    with c_cfg1:
-        st.markdown("##### 🎭 Mode Setting")
-        mode_radio = st.radio(
-            "Bot Mode",
-            ["PD", "LC"],
-            index=0 if config.mode == "PD" else 1,
-            help="PD = Performance Director (Group/Song & Individual notes)\nLC = Leadership Committee (EOQM/EOYM individual notes)"
-        )
-
-        st.markdown("##### 📁 File & Folder Settings")
-        cfg_name_file = st.text_input("Name List JSON File", value=config.name_filepath)
-        cfg_folder = st.text_input("Spreadsheets Folder", value=config.spreadsheet_folder)
-        cfg_form_file = st.text_input("Default Form File", value=config.form_file)
-
-    with c_cfg2:
-        st.markdown("##### 🔍 Search Terms (PD Mode)")
-        st.markdown("Keywords used to detect group and individual columns in the spreadsheet:")
-        terms_text = st.text_area(
-            "Search Terms (comma-separated)",
-            value=", ".join(config.search_list),
-            help="Columns matching any of these terms will be scanned for group feedback."
-        )
-        updated_search_terms = [t.strip() for t in terms_text.split(",") if t.strip()]
-
-        st.markdown("##### 🔌 Slack API Settings")
-        cfg_api_url = st.text_input("Slack API URL", value=config.slack_api_url)
-        cfg_token = st.text_input("Slack Bot Token (SLACK_BOT_TOKEN)", value=config.slack_token, type="password")
-
-        col_token_save, col_token_test = st.columns(2)
-        with col_token_save:
-            if st.button("💾 Save Token to Secrets", use_container_width=True, help="Saves to .streamlit/secrets.toml"):
-                config.save_token(cfg_token)
-                st.toast("Saved Slack token to .streamlit/secrets.toml!", icon="🔑")
-        with col_token_test:
-            if st.button("🔍 Test Token Auth", use_container_width=True):
-                ok, res = bot_logic.test_slack_token(cfg_token, cfg_api_url)
-                if ok:
-                    st.success(f"Auth OK: @{res.get('user')} on {res.get('team')}")
-                else:
-                    st.error(f"Auth error: {res}")
-
-    if st.button("💾 Save Settings to config.json", type="primary", use_container_width=True):
-        mode_changed = mode_radio != config.mode
-        new_config = {
-            "slack": {
-                "api_url": cfg_api_url
-            },
-            "file": {
-                "name_list": cfg_name_file,
-                "spreadsheet_folder": cfg_folder,
-                "form_file": cfg_form_file
-            },
-            "search": {
-                "terms": updated_search_terms
-            },
-            "mode": mode_radio
-        }
-        config.save_config(new_config)
-        if mode_changed:
-            st.session_state["parsed_comments"] = {}
-            st.session_state["full_messages"] = {}
-            st.session_state["selected_recipient_idx"] = 0
-        st.toast("Saved configuration to config.json!", icon="💾")
-        st.rerun()
-
-    st.markdown("---")
-
-    # Section 2: Member Name List Editor (name_list.json)
-    st.markdown("##### 👥 Member Name & Slack ID Directory (`name_list.json`)")
-    st.markdown("Add, edit, or remove members and their Slack IDs directly in the table below:")
-
-    name_records = [
-        {"Name": k, "Slack ID": v}
-        for k, v in st.session_state["name_dict"].items()
-    ]
-    df_names = pd.DataFrame(name_records)
-
-    edited_df = st.data_editor(
-        df_names,
-        num_rows="dynamic",
-        use_container_width=True,
-        column_config={
-            "Name": st.column_config.TextColumn("Member Name (lowercase)", required=True),
-            "Slack ID": st.column_config.TextColumn("Slack User ID (e.g. U0XXXXXXX)", required=True)
-        }
-    )
-
-    c_save_names, c_reload_names = st.columns([2, 1])
-    with c_save_names:
-        if st.button("💾 Save Directory to name_list.json", type="primary", use_container_width=True):
-            updated_dict = {}
-            for _, row in edited_df.iterrows():
-                name_val = str(row["Name"]).strip().lower() if pd.notna(row["Name"]) else ""
-                id_val = str(row["Slack ID"]).strip() if pd.notna(row["Slack ID"]) else ""
-                if name_val and id_val:
-                    updated_dict[name_val] = id_val
-
-            bot_logic.save_name_list(updated_dict, config.name_filepath)
-            refresh_name_list()
-            st.toast(f"Saved {len(updated_dict)} members to {config.name_filepath}!", icon="👥")
-            st.rerun()
-
-    with c_reload_names:
-        if st.button("🔄 Reload from File", use_container_width=True):
-            refresh_name_list()
-            st.rerun()
