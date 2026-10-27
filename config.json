@@ -1,14 +1,20 @@
 {
   "slack": {
     "api_url": "https://slack.com/api/"
-            },
+  },
   "file": {
     "name_list": "name_list.json",
     "spreadsheet_folder": "spreadsheets",
     "form_file": "Tales-MPP-Winter-2026.xlsx"
   },
   "search": {
-    "terms": ["Group", "Ensemble", "Arashi", "Three Sizz", "Individual"]
+    "terms": [
+      "Group",
+      "Ensemble",
+      "Arashi",
+      "Three Sizz",
+      "Individual"
+    ]
   },
   "mode": "PD"
 }

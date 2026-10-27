@@ -1,8 +1,47 @@
-Tool for sending out personal feedback/notes after practice performances.
+# ST-SlackBot
 
-Need to provide the following:
+Tool for sending out personal feedback and notes after practice performances.
 
-1) Slack Bot Token in token.env (SLACK_BOT_TOKEN=######)
-2) name_list.json ({"name": "AAAAAAAAA", "name2": "BBBBBBBBB"})
+## Prerequisites
 
-The slack bot needs to be invited to the workspace you want this bot to work in and have read/write permissions.
+1. **Slack Bot Token** in Streamlit secrets (`.streamlit/secrets.toml`):
+   ```toml
+   SLACK_BOT_TOKEN = "xoxb-xxxxxxxxxxxx"
+   ```
+   *(Or alternatively via `token.env` / environment variables)*
+2. **Member Slack ID mapping** in `name_list.json`:
+   ```json
+   {
+       "name1": "AAAAAAAAA",
+       "name2": "BBBBBBBBB"
+   }
+   ```
+3. Invite your Slack Bot to your workspace with `chat:write` permissions.
+
+---
+
+## 🚀 Running the Streamlit GUI
+
+Launch the interactive web application:
+
+```bash
+streamlit run app.py
+```
+
+### GUI Features:
+- **Spreadsheet Upload / Selection**: Upload `.xlsx` spreadsheets or select directly from the `spreadsheets/` directory.
+- **Group & Member Management**: Easily assign members to performance groups with multi-select dropdowns, add/remove names on the fly, or use the **"Auto-Detect from Comments"** feature to automatically discover members mentioned in the feedback.
+- **Sample Comment Preview**: Inspect the exact Slack formatted message before dispatching, preview random samples, view section breakdowns, and audit all members at once.
+- **Safe Dispatch**: Send a single test message first, uncheck members from dispatch, and monitor real-time delivery with progress bar and audit logs.
+- **Mode Switching**: Switch effortlessly between **PD Mode** (Performance Director group/song notes) and **LC Mode** (Leadership Committee individual notes).
+- **Configuration & Directory Editor**: Edit `config.json`, search terms, Slack settings, and member Slack IDs with an interactive in-browser spreadsheet table.
+
+---
+
+## 💻 Running via CLI
+
+You can also run the command-line script directly:
+
+```bash
+python main.py
+```
