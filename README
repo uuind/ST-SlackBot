@@ -1,0 +1,8 @@
+Tool for sending out personal feedback/notes after practice performances.
+
+Need to provide the following:
+
+1) Slack Bot Token in token.env (SLACK_BOT_TOKEN=######)
+2) name_list.json ({"name": "AAAAAAAAA", "name2": "BBBBBBBBB"})
+
+The slack bot needs to be invited to the workspace you want this bot to work in and have read/write permissions.
