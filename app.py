@@ -2,6 +2,7 @@ import os
 import json
 import time
 import random
+import importlib
 from collections import defaultdict
 import streamlit as st
 import pandas as pd
@@ -10,6 +11,47 @@ from pathlib import Path
 import config
 import bot_logic
 import auth
+
+# Force reload helper modules so Streamlit Cloud picks up newly added functions without stale cache
+try:
+    importlib.reload(config)
+    importlib.reload(bot_logic)
+    importlib.reload(auth)
+except Exception:
+    pass
+
+
+def safe_parse_name_list_json(raw_content) -> dict:
+    """Parse name list JSON via bot_logic with defensive local fallback."""
+    if hasattr(bot_logic, "parse_name_list_json"):
+        return bot_logic.parse_name_list_json(raw_content)
+
+    if isinstance(raw_content, (bytes, bytearray)):
+        raw_content = raw_content.decode("utf-8")
+    data = json.loads(raw_content) if isinstance(raw_content, str) else raw_content
+    result = {}
+    if isinstance(data, dict):
+        items = data.get("members") or data.get("users") or data.get("roster")
+        if not items:
+            for k, v in data.items():
+                if isinstance(v, str):
+                    result[str(k).strip().lower()] = v.strip()
+                elif isinstance(v, dict):
+                    sid = v.get("id") or v.get("slack_id") or ""
+                    result[str(k).strip().lower()] = str(sid).strip()
+            return result
+    elif isinstance(data, list):
+        items = data
+    else:
+        return {}
+
+    for item in items:
+        if isinstance(item, dict):
+            name = item.get("name") or item.get("Name") or item.get("member") or ""
+            sid = item.get("slack_id") or item.get("Slack ID") or item.get("id") or ""
+            if name:
+                result[str(name).strip().lower()] = str(sid).strip()
+    return result
 
 # -----------------------------------------------------------------------------
 # Streamlit Page Setup
@@ -366,7 +408,7 @@ with tab_config:
             name_sig = f"{uploaded_name_file.name}_{uploaded_name_file.size}"
             if st.session_state.get("last_uploaded_name_sig") != name_sig:
                 try:
-                    parsed_dict = bot_logic.parse_name_list_json(uploaded_name_file.getvalue())
+                    parsed_dict = safe_parse_name_list_json(uploaded_name_file.getvalue())
                     if parsed_dict:
                         st.session_state["name_dict"] = parsed_dict
                         st.session_state["name_list_source"] = uploaded_name_file.name
@@ -1280,27 +1322,42 @@ with tab_send:
         # Safety Check / Test Send
         st.markdown("---")
         st.markdown("##### 2. Optional: Send Test Message First")
-        test_col1, test_col2 = st.columns([3, 1])
-        with test_col1:
-            test_slack_id = st.text_input(
-                "Test Slack User ID or Channel (e.g. your Slack ID)",
-                value=st.session_state["name_dict"].get(recipients[0], ""),
-                placeholder="U0XXXXXXXXX"
-            )
-        with test_col2:
-            st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
-            if st.button("🧪 Send Single Test Message", use_container_width=True):
-                if not test_slack_id:
-                    st.error("Please enter a Slack User ID for testing.")
+        st.caption("Send a sample feedback payload directly to **your own Slack ID** or a test channel before broadcasting to everyone.")
+
+        with st.form("test_send_form"):
+            t_col_user, t_col_target, t_col_btn = st.columns([2, 3, 2])
+            with t_col_user:
+                sample_target = st.selectbox(
+                    "Sample Feedback Payload:",
+                    options=recipients,
+                    index=0,
+                    help="The generated feedback for this member will be sent as the test payload."
+                )
+            with t_col_target:
+                test_slack_id = st.text_input(
+                    "Your Test Slack User ID or Channel ID:",
+                    value=st.session_state.get("last_test_slack_id", ""),
+                    placeholder="e.g. U0XXXXXXXXX (your Slack ID)",
+                    help="Enter YOUR Slack User ID so the test message is only delivered to you."
+                )
+            with t_col_btn:
+                st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+                send_test_btn = st.form_submit_button("🧪 Send Test Message", type="secondary", use_container_width=True)
+
+            if send_test_btn:
+                clean_target = test_slack_id.strip()
+                if not clean_target:
+                    st.error("Please enter your Slack User ID or test channel ID to receive the test message.")
                 else:
-                    sample_msg = full_msgs[recipients[0]]
-                    with st.spinner("Sending test message..."):
+                    st.session_state["last_test_slack_id"] = clean_target
+                    sample_msg = full_msgs[sample_target]
+                    with st.spinner(f"Sending sample feedback for @{sample_target} to {clean_target}..."):
                         active_tok = get_active_token()
                         ok, res = bot_logic.send_slack_message(
-                            active_tok, config.slack_api_url, test_slack_id, sample_msg
+                            active_tok, config.slack_api_url, clean_target, sample_msg
                         )
                         if ok:
-                            st.success(f"Test message sent successfully! (ts: {res})")
+                            st.success(f"✅ Test message (sample for **@{sample_target}**) was delivered exclusively to **`{clean_target}`**! (Slack ts: `{res}`)")
                         else:
                             st.error(f"Failed to send test message: {res}")
 
