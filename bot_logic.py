@@ -255,7 +255,7 @@ def auto_detect_members_for_group(sheet, indiv_col_idx, known_members, group_nam
     return [m for m in known_members if m.lower() in found_members]
 
 
-def parse_pd_comments(sheet, group_configs):
+def parse_pd_comments(sheet, group_configs, header_title=""):
     """
     Parses PD mode comments from sheet using the group configurations.
     group_configs is a list of dicts:
@@ -319,27 +319,44 @@ def parse_pd_comments(sheet, group_configs):
     # Format full messages
     full_message_by_person = {}
     for person, sections in comments_by_person.items():
-        full_message_by_person[person] = format_pd_message(sections)
+        full_message_by_person[person] = format_pd_message(sections, header_title=header_title)
 
     return comments_by_person, full_message_by_person
 
 
-def format_pd_message(sections):
+def build_header_block(header_title):
+    """Format a Slack header banner indicating which spreadsheet/feedback this is for."""
+    if not header_title or not str(header_title).strip():
+        return ""
+    title = str(header_title).strip().strip("*").strip()
+    if not any(title.startswith(p) for p in ("📝", "📢", "🥁", "Feedback")):
+        title = f"Feedback: {title}"
+    return f"*📝 {title}*\n{'=' * 32}\n\n"
+
+
+def format_pd_message(sections, header_title=""):
     """
     Format PD sections into the exact Slack message format:
+    *📝 Feedback: <Spreadsheet Name>*
+    ================================
+
     *Section Name*
     comments
     -----------------------
     """
+    header_block = build_header_block(header_title)
     whole_comment = ""
     for section_name, text in sections.items():
         clean_text = text.strip() if text else ""
         if clean_text:
             whole_comment += f"*{section_name}*\n{clean_text}\n-----------------------\n"
-    return whole_comment.strip()
+
+    if whole_comment.strip():
+        return (header_block + whole_comment).strip()
+    return ""
 
 
-def parse_lc_comments(sheet, person_list):
+def parse_lc_comments(sheet, person_list, header_title=""):
     """
     Parses LC mode comments from sheet where column headers match person names.
     Returns:
@@ -365,20 +382,27 @@ def parse_lc_comments(sheet, person_list):
 
     full_message_by_person = {}
     for person, comments in comments_by_person.items():
-        full_message_by_person[person] = format_lc_message(comments)
+        full_message_by_person[person] = format_lc_message(comments, header_title=header_title)
 
     return comments_by_person, full_message_by_person
 
 
-def format_lc_message(comments):
+def format_lc_message(comments, header_title=""):
     """
     Format LC comments into Slack message format:
+    *📝 Feedback: <Spreadsheet Name>*
+    ================================
+
     *Personal Feedback*
     ‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾
     <comments>
     """
     clean_text = comments.strip() if comments else ""
-    return f"*Personal Feedback*\n‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾\n{clean_text}\n"
+    if not clean_text:
+        return ""
+    header_block = build_header_block(header_title)
+    body = f"*Personal Feedback*\n‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾‾\n{clean_text}\n"
+    return (header_block + body).strip()
 
 
 def render_slack_dm_html(sender_name, recipient_name, recipient_id, message_text, theme="dark"):
@@ -397,9 +421,9 @@ def render_slack_dm_html(sender_name, recipient_name, recipient_id, message_text
 
     escaped = html.escape(message_text.strip())
 
-    # Replace horizontal divider lines (---, ‾‾‾, ___)
+    # Replace horizontal divider lines (---, ‾‾‾, ___, ===)
     escaped = re.sub(
-        r'^[ \t]*[-_‾—]{3,}[ \t]*$',
+        r'^[ \t]*[-_‾—=]{3,}[ \t]*$',
         f'<div style="height: 1px; background-color: {hr_color}; margin: 12px 0;"></div>',
         escaped,
         flags=re.MULTILINE
@@ -475,6 +499,89 @@ def test_slack_token(token, api_url="https://slack.com/api/"):
             return False, data.get("error", "Unknown Slack API error")
     except Exception as e:
         return False, str(e)
+
+
+def fetch_slack_users(token, api_url="https://slack.com/api/"):
+    """
+    Fetch all active, non-bot human members from the Slack workspace via users.list.
+    Requires the `users:read` OAuth scope on the bot token.
+    Returns (ok: bool, users_list_or_error: list[dict] or str).
+    """
+    if not token or not token.strip():
+        return False, "Slack Bot Token is missing. Please set your token in Step 1 or secrets."
+
+    clean_token = token.strip()
+    base_url = api_url.rstrip('/')
+    url = f"{base_url}/users.list"
+    headers = {
+        'Authorization': f'Bearer {clean_token}',
+        'Content-Type': 'application/json; charset=utf-8'
+    }
+
+    members = []
+    cursor = None
+
+    try:
+        while True:
+            params = {'limit': 200}
+            if cursor:
+                params['cursor'] = cursor
+
+            resp = requests.get(url, headers=headers, params=params, timeout=12)
+            data = resp.json()
+
+            if not data.get("ok"):
+                err = data.get("error", "Unknown error")
+                if err == "missing_scope":
+                    needed = data.get("needed", "users:read")
+                    return False, (
+                        f"Missing required Slack OAuth scope: `{needed}`.\n\n"
+                        f"To enable this:\n"
+                        f"1. Go to your Slack App dashboard at https://api.slack.com/apps\n"
+                        f"2. Navigate to **OAuth & Permissions** → **Scopes** → **Bot Token Scopes**\n"
+                        f"3. Add the `{needed}` scope.\n"
+                        f"4. Click **Reinstall to Workspace** at the top of the OAuth page to grant permissions."
+                    )
+                elif err in ("invalid_auth", "token_revoked", "account_inactive"):
+                    return False, f"Slack Authentication error: `{err}`. Please verify your bot token."
+                return False, f"Slack API error: `{err}`"
+
+            for m in data.get("members", []):
+                # Filter out deleted members and bots
+                if m.get("deleted") or m.get("is_bot") or m.get("is_app_user"):
+                    continue
+                if m.get("id") == "USLACKBOT":
+                    continue
+
+                prof = m.get("profile", {})
+                disp_name = prof.get("display_name", "").strip()
+                real_name = prof.get("real_name", "").strip() or m.get("real_name", "").strip()
+                uname = m.get("name", "").strip()
+                uid = m.get("id", "").strip()
+
+                # Choose best default name: display_name > real_name first name > username
+                first_name = real_name.split()[0] if real_name else ""
+                suggested = (disp_name or first_name or uname).lower()
+
+                members.append({
+                    "id": uid,
+                    "username": uname,
+                    "real_name": real_name,
+                    "display_name": disp_name,
+                    "suggested_name": suggested
+                })
+
+            cursor = data.get("response_metadata", {}).get("next_cursor")
+            if not cursor:
+                break
+
+        members.sort(key=lambda x: x["suggested_name"])
+        return True, members
+
+    except requests.exceptions.RequestException as e:
+        return False, f"Network error connecting to Slack API: {e}"
+    except Exception as e:
+        return False, f"Unexpected error while fetching Slack users: {e}"
 
 
 def send_slack_message(token, api_url, user_id, message_text, max_retries=3):

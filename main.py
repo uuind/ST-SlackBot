@@ -42,6 +42,8 @@ def run_slackbot_process():
     print(f"Active Mode: {config.mode}\n")
 
     full_messages = {}
+    sheet_basename = os.path.splitext(os.path.basename(spreadsheet_path))[0]
+    header_banner = f"Feedback: {sheet_basename}"
 
     # 3. Process according to mode
     if config.mode == "PD":
@@ -75,10 +77,10 @@ def run_slackbot_process():
                 "members": members
             })
 
-        _, full_messages = bot_logic.parse_pd_comments(sheet, group_configs)
+        _, full_messages = bot_logic.parse_pd_comments(sheet, group_configs, header_title=header_banner)
 
     elif config.mode == "LC":
-        _, full_messages = bot_logic.parse_lc_comments(sheet, known_members)
+        _, full_messages = bot_logic.parse_lc_comments(sheet, known_members, header_title=header_banner)
 
     else:
         print(f"Invalid mode in configuration: '{config.mode}'")

@@ -142,6 +142,10 @@ if "full_messages" not in st.session_state:
 if "active_spreadsheet_name" not in st.session_state:
     st.session_state["active_spreadsheet_name"] = config.form_file
 
+if "message_header_text" not in st.session_state:
+    base = os.path.splitext(os.path.basename(config.form_file))[0] if config.form_file else ""
+    st.session_state["message_header_text"] = f"Feedback: {base}" if base else ""
+
 if "selected_recipient_idx" not in st.session_state:
     st.session_state["selected_recipient_idx"] = 0
 
@@ -190,6 +194,14 @@ def clear_group_gui_state():
 def trigger_parse_comments(sheet):
     """Parse comments according to current mode and group/column config."""
     name_list = list(st.session_state["name_dict"].keys())
+
+    # Retrieve or derive message header text
+    header_title = st.session_state.get("message_header_text")
+    if not header_title:
+        active_sheet_name = st.session_state.get("active_spreadsheet_name", "")
+        base_name = os.path.splitext(os.path.basename(active_sheet_name))[0] if active_sheet_name else ""
+        header_title = f"Feedback: {base_name}" if base_name else ""
+
     if config.mode == "PD":
         if st.session_state["group_configs"]:
             # Sync members and columns from session state if present
@@ -203,12 +215,12 @@ def trigger_parse_comments(sheet):
                     g["indiv_col"] = st.session_state[f"i_col_{gid}"]
                 if gid and f"name_{gid}" in st.session_state:
                     g["group_name"] = st.session_state[f"name_{gid}"]
-            comments, msgs = bot_logic.parse_pd_comments(sheet, st.session_state["group_configs"])
+            comments, msgs = bot_logic.parse_pd_comments(sheet, st.session_state["group_configs"], header_title=header_title)
             st.session_state["parsed_comments"] = comments
             st.session_state["full_messages"] = msgs
             st.session_state["last_parsed_mode"] = "PD"
     elif config.mode == "LC":
-        comments, msgs = bot_logic.parse_lc_comments(sheet, name_list)
+        comments, msgs = bot_logic.parse_lc_comments(sheet, name_list, header_title=header_title)
         st.session_state["parsed_comments"] = comments
         st.session_state["full_messages"] = msgs
         st.session_state["last_parsed_mode"] = "LC"
@@ -354,399 +366,370 @@ with col_badge:
 # -----------------------------------------------------------------------------
 # Main Navigation Tabs
 # -----------------------------------------------------------------------------
-tab_config, tab_upload, tab_groups, tab_preview, tab_send = st.tabs([
-    "⚙️ 1. Configuration & Roster",
-    "📁 2. Spreadsheet & Setup",
-    "👥 3. Group & Member Management",
-    "💬 4. Preview Sample Comments",
-    "🚀 5. Review & Send"
+# -----------------------------------------------------------------------------
+# Main Navigation Tabs (Streamlined 4-Step Flow)
+# -----------------------------------------------------------------------------
+tab_groups_label = "👥 2. Review Groups" if config.mode == "PD" else "📋 2. Review Member Columns"
+
+tab_setup, tab_groups, tab_preview, tab_send = st.tabs([
+    "📂 1. Setup & Spreadsheet",
+    tab_groups_label,
+    "💬 3. Review Comments",
+    "🚀 4. Send Comments"
 ])
 
 
 # =============================================================================
-# TAB 1: CONFIGURATION & ROSTER
+# TAB 1: SETUP & SPREADSHEET (Combined Roster, Spreadsheet & Auto Mode Detection)
 # =============================================================================
-with tab_config:
-    st.subheader("⚙️ Step 1: Configuration & Member Roster")
-    st.markdown(
-        "Set up your bot parameters, search terms, Slack token, and member roster. "
-        "You can upload existing `.json` files or adjust settings directly in the fields below."
-    )
+with tab_setup:
+    st.subheader("📂 Step 1: Setup & Spreadsheet Selection")
+    st.caption("Manage member Slack IDs, load your performance feedback spreadsheet, and confirm auto-detected modes.")
 
-    # Top File Uploaders Row (config.json & member directory JSON)
-    c_up_cfg, c_up_mem = st.columns(2)
-    with c_up_cfg:
-        st.markdown("##### 📄 Upload `config.json` (Optional)")
-        uploaded_cfg_file = st.file_uploader(
-            "Upload Configuration JSON (`config.json`)",
-            type=["json"],
-            key="upload_config_file",
-            help="Upload a config.json file to update mode, search terms, and Slack settings."
-        )
-        if uploaded_cfg_file is not None:
-            cfg_sig = f"{uploaded_cfg_file.name}_{uploaded_cfg_file.size}"
-            if st.session_state.get("last_uploaded_cfg_sig") != cfg_sig:
-                try:
-                    cfg_data = json.loads(uploaded_cfg_file.getvalue().decode("utf-8"))
-                    if isinstance(cfg_data, dict):
-                        st.session_state["last_uploaded_cfg_sig"] = cfg_sig
-                        config.save_config(cfg_data)
-                        st.toast(f"Loaded configuration from {uploaded_cfg_file.name}!", icon="⚙️")
-                        st.rerun()
-                except Exception as e:
-                    st.error(f"Error parsing config.json: {e}")
+    col_roster, col_sheet = st.columns(2)
 
-    with c_up_mem:
-        st.markdown("##### 👥 Upload Member Roster (Optional)")
-        uploaded_name_file = st.file_uploader(
-            "Upload Member Roster (`name_list.json` / roster)",
-            type=["json"],
-            key="upload_name_file",
-            help="Upload member names and Slack IDs. Flexible JSON formats supported."
-        )
-        if uploaded_name_file is not None:
-            name_sig = f"{uploaded_name_file.name}_{uploaded_name_file.size}"
-            if st.session_state.get("last_uploaded_name_sig") != name_sig:
-                try:
-                    parsed_dict = safe_parse_name_list_json(uploaded_name_file.getvalue())
-                    if parsed_dict:
-                        st.session_state["name_dict"] = parsed_dict
-                        st.session_state["name_list_source"] = uploaded_name_file.name
-                        st.session_state["last_uploaded_name_sig"] = name_sig
-                        bot_logic.save_name_list(parsed_dict, config.name_filepath)
-                        st.toast(f"Imported {len(parsed_dict)} members from {uploaded_name_file.name}!", icon="📥")
-                        st.rerun()
-                    else:
-                        st.error("Uploaded JSON was empty or did not contain recognizable member names.")
-                except Exception as e:
-                    st.error(f"Error parsing roster JSON: {e}")
-
-    st.markdown("---")
-
-    cfg = config.load_config()
-
-    # Section 1: Mode & Settings
-    c_cfg1, c_cfg2 = st.columns(2)
-
-    with c_cfg1:
-        st.markdown("##### 🎭 Mode Setting")
-        mode_radio = st.radio(
-            "Bot Mode",
-            ["PD", "LC"],
-            index=0 if config.mode == "PD" else 1,
-            help="PD = Performance Director (Group/Song & Individual notes)\nLC = Leadership Committee (EOQM/EOYM individual notes)"
-        )
-
-        st.markdown("##### 📁 File & Folder Settings")
-        cfg_name_file = st.text_input("Name List JSON File", value=config.name_filepath)
-        cfg_folder = st.text_input("Spreadsheets Folder", value=config.spreadsheet_folder)
-        cfg_form_file = st.text_input("Default Form File", value=config.form_file)
-
-    with c_cfg2:
-        st.markdown("##### 🔍 Search Terms (PD Mode)")
-        st.markdown("Keywords used to detect group and individual columns in the spreadsheet:")
-        terms_text = st.text_area(
-            "Search Terms (comma-separated)",
-            value=", ".join(config.search_list),
-            help="Columns matching any of these terms will be scanned for group feedback."
-        )
-        updated_search_terms = [t.strip() for t in terms_text.split(",") if t.strip()]
-
-        st.markdown("##### 🔌 Slack API Settings")
-        cfg_api_url = st.text_input("Slack API URL", value=config.slack_api_url)
-        cfg_token = st.text_input(
-            "Slack Bot Token (SLACK_BOT_TOKEN)",
-            value=get_active_token(),
-            type="password",
-            help="Slack bot token starting with xoxb-. On Streamlit Cloud, add this in App Settings → Secrets."
-        )
-
-        col_token_save, col_token_test = st.columns(2)
-        with col_token_save:
-            if st.button("💾 Apply / Save Token", use_container_width=True, help="Applies to current session and saves to .streamlit/secrets.toml if writable"):
-                clean_tok, saved_to_disk = config.save_token(cfg_token)
-                st.session_state["slack_token"] = clean_tok
-                if saved_to_disk:
-                    st.toast("Saved Slack token to .streamlit/secrets.toml!", icon="🔑")
-                else:
-                    st.info("ℹ️ **Token active for this session!** (Running in a read-only environment like Streamlit Cloud). To persist permanently, open your **Streamlit Cloud Dashboard → App Settings → Secrets** and add `SLACK_BOT_TOKEN = \"...\"`.")
-        with col_token_test:
-            if st.button("🔍 Test Token Auth", use_container_width=True):
-                ok, res = bot_logic.test_slack_token(cfg_token, cfg_api_url)
-                if ok:
-                    st.success(f"Auth OK: @{res.get('user')} on {res.get('team')}")
-                else:
-                    st.error(f"Auth error: {res}")
-
-    if st.button("💾 Save Settings to config.json", type="primary", use_container_width=True):
-        mode_changed = mode_radio != config.mode
-        new_config = {
-            "slack": {
-                "api_url": cfg_api_url
-            },
-            "file": {
-                "name_list": cfg_name_file,
-                "spreadsheet_folder": cfg_folder,
-                "form_file": cfg_form_file
-            },
-            "search": {
-                "terms": updated_search_terms
-            },
-            "mode": mode_radio
-        }
-        _, saved_ok = config.save_config(new_config)
-        if mode_changed:
-            st.session_state["parsed_comments"] = {}
-            st.session_state["full_messages"] = {}
-            st.session_state["selected_recipient_idx"] = 0
-        if saved_ok:
-            st.toast("Saved configuration to config.json!", icon="💾")
-        else:
-            st.info("ℹ️ Settings applied to active session (local filesystem is read-only).")
-        st.rerun()
-
-    st.markdown("---")
-
-    # Section 2: Member Name List Editor & Downloader
-    c_sec_hdr, c_sec_dn = st.columns([3, 2])
-    with c_sec_hdr:
-        st.markdown("##### 👥 Member Name & Slack ID Directory")
+    # -------------------------------------------------------------------------
+    # Card 1: Member Roster & Directory
+    # -------------------------------------------------------------------------
+    with col_roster:
+        st.markdown("##### 👥 Member Roster & Slack IDs")
         source_label = st.session_state.get("name_list_source", config.name_filepath)
-        st.caption(f"Active Directory Source: `{source_label}` ({len(st.session_state['name_dict'])} members loaded)")
-    with c_sec_dn:
-        json_export = json.dumps(st.session_state["name_dict"], indent=2)
-        st.download_button(
-            "📥 Download Directory (JSON)",
-            data=json_export,
-            file_name=st.session_state.get("name_list_source", "name_list.json"),
-            mime="application/json",
-            use_container_width=True,
-            help="Download the current member name & Slack ID directory as a JSON file"
-        )
+        num_members = len(st.session_state["name_dict"])
+        st.info(f"**{num_members} members loaded** • Source: `{source_label}`")
 
-    name_records = [
-        {"Name": k, "Slack ID": v}
-        for k, v in st.session_state["name_dict"].items()
-    ]
-    df_names = pd.DataFrame(name_records)
+        c_rf1, c_rf2, c_rf3 = st.columns(3)
+        with c_rf1:
+            if st.button("🤖 Fetch Slack", use_container_width=True, help="Queries Slack API users.list via users:read to populate members & IDs"):
+                active_tok = get_active_token()
+                with st.spinner("Fetching members from Slack..."):
+                    ok, res = bot_logic.fetch_slack_users(active_tok, config.slack_api_url)
+                    if not ok:
+                        st.error(res)
+                    else:
+                        existing_id_to_name = {v: k for k, v in st.session_state["name_dict"].items() if v}
+                        new_dict = {}
+                        slack_meta = dict(st.session_state.get("slack_user_meta", {}))
+                        for m in res:
+                            uid = m["id"]
+                            assigned_name = existing_id_to_name.get(uid, m["suggested_name"])
+                            if assigned_name in new_dict and new_dict[assigned_name] != uid:
+                                assigned_name = m["username"].lower()
+                            new_dict[assigned_name] = uid
+                            slack_meta[uid] = f"{m['real_name']} (@{m['username']})" if m['real_name'] else f"@{m['username']}"
 
-    edited_df = st.data_editor(
-        df_names,
-        num_rows="dynamic",
-        use_container_width=True,
-        column_config={
-            "Name": st.column_config.TextColumn("Member Name (lowercase)", required=True),
-            "Slack ID": st.column_config.TextColumn("Slack User ID (e.g. U0XXXXXXX)", required=True)
-        }
-    )
+                        st.session_state["name_dict"] = new_dict
+                        st.session_state["slack_user_meta"] = slack_meta
+                        st.session_state["name_list_source"] = "Slack Workspace API (users.list)"
+                        st.toast(f"Fetched {len(res)} members from Slack!", icon="🤖")
+                        st.rerun()
 
-    c_save_names, c_reload_names = st.columns([2, 1])
-    with c_save_names:
-        if st.button("💾 Apply & Save Directory", type="primary", use_container_width=True):
-            updated_dict = {}
-            for _, row in edited_df.iterrows():
-                name_val = str(row["Name"]).strip().lower() if pd.notna(row["Name"]) else ""
-                id_val = str(row["Slack ID"]).strip() if pd.notna(row["Slack ID"]) else ""
-                if name_val:
-                    updated_dict[name_val] = id_val
+        with c_rf2:
+            with st.popover("📁 Import JSON", use_container_width=True):
+                st.markdown("###### Upload Member Roster JSON")
+                uploaded_name_file = st.file_uploader(
+                    "Upload .json file",
+                    type=["json"],
+                    key="pop_upload_name_file",
+                    help="Upload a name_list.json file"
+                )
+                if uploaded_name_file is not None:
+                    name_sig = f"{uploaded_name_file.name}_{uploaded_name_file.size}"
+                    if st.session_state.get("last_uploaded_name_sig") != name_sig:
+                        try:
+                            parsed_dict = safe_parse_name_list_json(uploaded_name_file.getvalue())
+                            if parsed_dict:
+                                st.session_state["name_dict"] = parsed_dict
+                                st.session_state["name_list_source"] = uploaded_name_file.name
+                                st.session_state["last_uploaded_name_sig"] = name_sig
+                                bot_logic.save_name_list(parsed_dict, config.name_filepath)
+                                st.toast(f"Imported {len(parsed_dict)} members!", icon="📥")
+                                st.rerun()
+                            else:
+                                st.error("No valid members found in JSON.")
+                        except Exception as e:
+                            st.error(f"Error parsing JSON: {e}")
 
-            st.session_state["name_dict"] = updated_dict
-            saved_ok = bot_logic.save_name_list(updated_dict, config.name_filepath)
-            if saved_ok:
-                st.toast(f"Saved {len(updated_dict)} members to {config.name_filepath}!", icon="👥")
-            else:
-                st.toast(f"Updated {len(updated_dict)} members in active session!", icon="👥")
-            st.rerun()
+        with c_rf3:
+            json_export = json.dumps(st.session_state["name_dict"], indent=2)
+            st.download_button(
+                "📥 Export JSON",
+                data=json_export,
+                file_name="name_list.json",
+                mime="application/json",
+                use_container_width=True,
+                help="Download the online copy of name_list.json"
+            )
 
-    with c_reload_names:
-        if st.button("🔄 Reload from Default File", use_container_width=True):
-            refresh_name_list()
-            st.rerun()
+        with st.expander("👀 View & Edit Member Names & Slack IDs", expanded=False):
+            st.caption("Double-click any name in **Spreadsheet Name** to match performance form headers:")
+            slack_meta_cache = st.session_state.get("slack_user_meta", {})
+            name_records = []
+            for k, v in st.session_state["name_dict"].items():
+                rec = {
+                    "Spreadsheet Name": k,
+                    "Slack ID": v,
+                }
+                if v in slack_meta_cache:
+                    rec["Slack Profile Info"] = slack_meta_cache[v]
+                name_records.append(rec)
 
+            df_names = pd.DataFrame(name_records)
+            col_config = {
+                "Spreadsheet Name": st.column_config.TextColumn("Spreadsheet Name", required=True),
+                "Slack ID": st.column_config.TextColumn("Slack User ID", required=True),
+            }
+            if "Slack Profile Info" in df_names.columns:
+                col_config["Slack Profile Info"] = st.column_config.TextColumn("Slack Profile", disabled=True)
 
-# =============================================================================
-# TAB 2: SPREADSHEET & SETUP
-# =============================================================================
-with tab_upload:
-    st.subheader("📁 Step 2: Spreadsheet Selection & Setup")
+            edited_df = st.data_editor(
+                df_names,
+                num_rows="dynamic",
+                use_container_width=True,
+                column_config=col_config,
+                key="setup_roster_editor"
+            )
 
-    col_src1, col_src2 = st.columns(2)
-    with col_src1:
-        source_type = st.radio(
-            "Spreadsheet Source",
-            ["Choose existing from spreadsheets folder", "Upload new spreadsheet (.xlsx)"],
-            label_visibility="collapsed"
-        )
+            c_save_r, c_rel_r = st.columns([2, 1])
+            with c_save_r:
+                if st.button("💾 Save Directory Changes", type="secondary", use_container_width=True):
+                    updated_dict = {}
+                    for _, row in edited_df.iterrows():
+                        name_val = str(row.get("Spreadsheet Name", "")).strip().lower() if pd.notna(row.get("Spreadsheet Name")) else ""
+                        id_val = str(row.get("Slack ID", "")).strip() if pd.notna(row.get("Slack ID")) else ""
+                        if name_val:
+                            updated_dict[name_val] = id_val
+                    st.session_state["name_dict"] = updated_dict
+                    bot_logic.save_name_list(updated_dict, config.name_filepath)
+                    st.toast(f"Saved {len(updated_dict)} members!", icon="💾")
+                    st.rerun()
+            with c_rel_r:
+                if st.button("🔄 Reload File", use_container_width=True):
+                    refresh_name_list()
+                    st.rerun()
 
-    sheet_source = None
-    loaded_file_label = ""
-
-    if source_type == "Choose existing from spreadsheets folder":
+    # -------------------------------------------------------------------------
+    # Card 2: Spreadsheet Selection & Auto Mode Detection
+    # -------------------------------------------------------------------------
+    with col_sheet:
+        st.markdown("##### 📁 Spreadsheet (.xlsx)")
         existing_files = bot_logic.get_available_spreadsheets(config.spreadsheet_folder)
-        if not existing_files:
-            st.warning(f"No .xlsx spreadsheets found in `{config.spreadsheet_folder}/` folder.")
+        sheet_source = None
+        loaded_file_label = ""
+
+        c_src_type = st.radio("Spreadsheet Selection Mode", ["Existing from folder", "Upload new (.xlsx)"], horizontal=True, label_visibility="collapsed")
+        if c_src_type == "Existing from folder":
+            if existing_files:
+                default_idx = existing_files.index(config.form_file) if config.form_file in existing_files else 0
+                selected_file = st.selectbox("Select file", existing_files, index=default_idx, label_visibility="collapsed")
+                if selected_file:
+                    sheet_source = os.path.join(config.spreadsheet_folder, selected_file)
+                    loaded_file_label = selected_file
+                    st.session_state["active_spreadsheet_name"] = selected_file
+            else:
+                st.caption(f"No spreadsheets found in `{config.spreadsheet_folder}/`.")
         else:
-            default_idx = existing_files.index(config.form_file) if config.form_file in existing_files else 0
-            selected_file = st.selectbox("Select Spreadsheet", existing_files, index=default_idx)
-            if selected_file:
-                sheet_source = os.path.join(config.spreadsheet_folder, selected_file)
-                loaded_file_label = selected_file
-                st.session_state["active_spreadsheet_name"] = selected_file
-
-    else:
-        uploaded_file = st.file_uploader("Upload an Excel file (.xlsx)", type=["xlsx"])
-        if uploaded_file is not None:
-            sheet_source = uploaded_file
-            loaded_file_label = uploaded_file.name
-            st.session_state["active_spreadsheet_name"] = uploaded_file.name
-
-            save_uploaded = st.checkbox("Save a copy to spreadsheets folder", value=True)
-            if save_uploaded:
+            uploaded_file = st.file_uploader("Upload Excel spreadsheet (.xlsx)", type=["xlsx"], key="setup_uploader_file", label_visibility="collapsed")
+            if uploaded_file is not None:
+                sheet_source = uploaded_file
+                loaded_file_label = uploaded_file.name
+                st.session_state["active_spreadsheet_name"] = uploaded_file.name
                 save_path = os.path.join(config.spreadsheet_folder, uploaded_file.name)
                 os.makedirs(config.spreadsheet_folder, exist_ok=True)
                 with open(save_path, "wb") as f:
                     f.write(uploaded_file.getbuffer())
-                st.success(f"Saved `{uploaded_file.name}` to `{config.spreadsheet_folder}/`.")
 
-    # Load and inspect sheet if source is available
-    if sheet_source is not None:
-        try:
-            wb, sheet, sheet_names = bot_logic.load_workbook_and_sheet(sheet_source)
-            st.session_state["wb"] = wb
-            st.session_state["sheet"] = sheet
+        if sheet_source is not None:
+            try:
+                wb, sheet, sheet_names = bot_logic.load_workbook_and_sheet(sheet_source)
+                st.session_state["wb"] = wb
+                st.session_state["sheet"] = sheet
 
-            st.success(f"Loaded spreadsheet: **{loaded_file_label}**")
+                if len(sheet_names) > 1:
+                    selected_sheet_name = st.selectbox("Worksheet", sheet_names, index=sheet_names.index(sheet.title) if sheet.title in sheet_names else 0)
+                    if selected_sheet_name != sheet.title:
+                        sheet = wb[selected_sheet_name]
+                        st.session_state["sheet"] = sheet
 
-            # Sheet selector if multiple sheets
-            if len(sheet_names) > 1:
-                selected_sheet_name = st.selectbox("Worksheet", sheet_names, index=sheet_names.index(sheet.title) if sheet.title in sheet_names else 0)
-                if selected_sheet_name != sheet.title:
-                    sheet = wb[selected_sheet_name]
-                    st.session_state["sheet"] = sheet
+                headers = bot_logic.get_sheet_headers(sheet)
+                st.session_state["headers"] = headers
 
-            headers = bot_logic.get_sheet_headers(sheet)
-            st.session_state["headers"] = headers
+                # Auto-detection
+                all_known = list(st.session_state["name_dict"].keys())
+                detected_mode, detect_reason, _ = bot_logic.detect_spreadsheet_mode(headers, all_known, config.search_list)
+                st.session_state["detected_mode"] = detected_mode
+                st.session_state["detected_reason"] = detect_reason
 
-            # Run Auto-detection on Spreadsheet Headers
-            all_known = list(st.session_state["name_dict"].keys())
-            detected_mode, detect_reason, detect_details = bot_logic.detect_spreadsheet_mode(
-                headers, all_known, config.search_list
-            )
-            st.session_state["detected_mode"] = detected_mode
-            st.session_state["detected_reason"] = detect_reason
+                # When a new spreadsheet is loaded, reset group assignments
+                if st.session_state.get("last_loaded_file") != loaded_file_label:
+                    st.session_state["last_loaded_file"] = loaded_file_label
+                    base_name = os.path.splitext(loaded_file_label)[0]
+                    default_title = f"Feedback: {base_name}"
+                    st.session_state["message_header_text"] = default_title
+                    st.session_state["input_message_header"] = default_title
+                    clear_group_gui_state()
+                    if config.mode != detected_mode:
+                        config.mode = detected_mode
+                        cfg = config.load_config()
+                        cfg["mode"] = detected_mode
+                        config.save_config(cfg)
+                    if config.mode == "PD":
+                        paired, _, _ = bot_logic.detect_groups_pd(headers, config.search_list)
+                        st.session_state["group_configs"] = [
+                            {
+                                "id": f"grp_{i}_{int(time.time()*1000)}",
+                                "group_name": p["group_name"],
+                                "group_col": p["group_col"],
+                                "indiv_name": p["indiv_name"],
+                                "indiv_col": p["indiv_col"],
+                                "members": []
+                            }
+                            for i, p in enumerate(paired)
+                        ]
+                    st.toast(f"Loaded {loaded_file_label} ({detected_mode} Mode)", icon="📄")
+                    st.rerun()
 
-            # When a new spreadsheet is loaded, clear all names/groups/feedback GUI items
-            if st.session_state.get("last_loaded_file") != loaded_file_label:
-                st.session_state["last_loaded_file"] = loaded_file_label
-                clear_group_gui_state()
-                if config.mode != detected_mode:
-                    config.mode = detected_mode
-                    cfg = config.load_config()
-                    cfg["mode"] = detected_mode
-                    config.save_config(cfg)
-
-                # Initialize detected groups with strictly EMPTY member lists
-                if config.mode == "PD":
-                    paired, _, _ = bot_logic.detect_groups_pd(headers, config.search_list)
-                    st.session_state["group_configs"] = [
-                        {
-                            "id": f"grp_{i}_{int(time.time()*1000)}",
-                            "group_name": p["group_name"],
-                            "group_col": p["group_col"],
-                            "indiv_name": p["indiv_name"],
-                            "indiv_col": p["indiv_col"],
-                            "members": []  # Strictly empty on load
-                        }
-                        for i, p in enumerate(paired)
-                    ]
-                st.toast(f"Loaded {loaded_file_label}. Cleared group assignments & names.", icon="🧹")
-                st.rerun()
-
-            # Basic Metrics
-            m1, m2, m3 = st.columns(3)
-            m1.metric("Total Rows / Responses", max(sheet.max_row - 1, 0))
-            m2.metric("Total Columns", len(headers))
-            m3.metric("Current Mode", config.mode)
-
-            # Auto-detection Banner & Manual Override
-            st.markdown("---")
-            c_det_info, c_det_btn = st.columns([3, 2])
-            with c_det_info:
-                st.markdown("##### 🤖 Spreadsheet Mode Detection")
-                if config.mode == detected_mode:
-                    st.success(f"**Auto-detected: {detected_mode} Mode** — {detect_reason}")
-                else:
-                    st.warning(f"**Manual Override Active:** Using **{config.mode} Mode** (Sheet format was detected as **{detected_mode} Mode** — *{detect_reason}*).")
-
-            with c_det_btn:
-                st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
-                other_mode = "LC" if config.mode == "PD" else "PD"
-                col_ovr, col_redet = st.columns(2)
-                with col_ovr:
-                    if st.button(f"Switch to {other_mode} (Override)", use_container_width=True):
+                # Mode & Status Indicator
+                c_det_banner, c_det_toggle = st.columns([3, 1])
+                with c_det_banner:
+                    if config.mode == detected_mode:
+                        st.success(f"🤖 **Auto-detected: {detected_mode} Mode** — {detect_reason}")
+                    else:
+                        st.warning(f"⚠️ **Override Active:** Using **{config.mode} Mode** (Sheet format was detected as {detected_mode})")
+                with c_det_toggle:
+                    other_mode = "LC" if config.mode == "PD" else "PD"
+                    if st.button(f"Switch to {other_mode}", use_container_width=True):
                         config.mode = other_mode
                         cfg = config.load_config()
                         cfg["mode"] = other_mode
                         config.save_config(cfg)
-                        st.session_state["group_configs"] = []
-                        st.session_state["parsed_comments"] = {}
-                        st.session_state["full_messages"] = {}
-                        st.session_state["selected_recipient_idx"] = 0
+                        clear_group_gui_state()
                         st.rerun()
-                with col_redet:
-                    if st.button("🪄 Re-detect Mode", use_container_width=True):
-                        if config.mode != detected_mode:
-                            config.mode = detected_mode
-                            cfg = config.load_config()
-                            cfg["mode"] = detected_mode
-                            config.save_config(cfg)
-                            st.session_state["group_configs"] = []
-                            st.session_state["parsed_comments"] = {}
-                            st.session_state["full_messages"] = {}
-                            st.session_state["selected_recipient_idx"] = 0
-                            st.rerun()
 
-            st.markdown("---")
+                # Message Header Banner
+                current_header = st.session_state.get("message_header_text", "")
+                if not current_header:
+                    current_header = f"Feedback: {os.path.splitext(loaded_file_label)[0]}"
+                    st.session_state["message_header_text"] = current_header
 
-            # Auto-detect groups preview if in PD mode
-            if config.mode == "PD":
-                paired, _, _ = bot_logic.detect_groups_pd(headers, config.search_list)
-                st.markdown(f"**Detected Group Columns ({len(paired)} detected):**")
-                tags_html = " ".join([f"`{p['group_name']}`" for p in paired])
-                st.markdown(tags_html)
-            elif config.mode == "LC":
-                matched_cols = [h for h in headers if h and h.lower().strip() in all_known]
-                st.markdown(f"**Detected Member Columns ({len(matched_cols)} detected):**")
-                st.markdown(" ".join([f"`{h}`" for h in matched_cols[:10]]) + (f" *...and {len(matched_cols)-10} more*" if len(matched_cols) > 10 else ""))
+                c_h_in, c_h_pv = st.columns([3, 2])
+                with c_h_in:
+                    new_header = st.text_input(
+                        "📝 Message Header Banner",
+                        value=current_header,
+                        key="input_message_header",
+                        help="Appears at the very top of each member's Slack message"
+                    )
+                    if new_header != st.session_state.get("message_header_text"):
+                        st.session_state["message_header_text"] = new_header
+                        if st.session_state.get("full_messages"):
+                            trigger_parse_comments(sheet)
+                        st.rerun()
+                with c_h_pv:
+                    st.caption("Live Header Preview:")
+                    p_block = bot_logic.build_header_block(st.session_state.get("message_header_text", ""))
+                    if p_block:
+                        st.code(p_block.rstrip(), language="markdown")
 
-            with st.expander("👀 View Spreadsheet Header & First 3 Responses", expanded=False):
-                rows_data = []
-                for r in range(1, min(sheet.max_row + 1, 5)):
-                    row_vals = [sheet.cell(row=r, column=c).value for c in range(1, len(headers) + 1)]
-                    rows_data.append(row_vals)
-                if rows_data:
-                    df = pd.DataFrame(rows_data[1:], columns=rows_data[0])
-                    st.dataframe(df, use_container_width=True)
+                with st.expander("👀 View Spreadsheet Header & First 3 Responses", expanded=False):
+                    rows_data = []
+                    for r in range(1, min(sheet.max_row + 1, 5)):
+                        row_vals = [sheet.cell(row=r, column=c).value for c in range(1, len(headers) + 1)]
+                        rows_data.append(row_vals)
+                    if rows_data:
+                        df = pd.DataFrame(rows_data[1:], columns=rows_data[0])
+                        st.dataframe(df, use_container_width=True)
 
-        except Exception as e:
-            st.error(f"Error loading workbook: {e}")
+            except Exception as e:
+                st.error(f"Error loading workbook: {e}")
+        else:
+            st.info("Select or upload an Excel spreadsheet above to begin.")
+
+    # -------------------------------------------------------------------------
+    # Collapsible Advanced / Optional Settings (Slack Token, Config, Keywords)
+    # -------------------------------------------------------------------------
+    st.markdown("---")
+    with st.expander("⚙️ Optional Settings (Slack Bot Token, Config & Keywords)", expanded=False):
+        c_opt1, c_opt2 = st.columns(2)
+        with c_opt1:
+            st.markdown("###### 🔌 Slack Bot Token")
+            cfg_token = st.text_input(
+                "Slack Bot Token (SLACK_BOT_TOKEN)",
+                value=get_active_token(),
+                type="password",
+                help="Bot token starting with xoxb-."
+            )
+            col_t_save, col_t_test = st.columns(2)
+            with col_t_save:
+                if st.button("💾 Save Token", use_container_width=True):
+                    clean_tok, _ = config.save_token(cfg_token)
+                    st.session_state["slack_token"] = clean_tok
+                    st.toast("Saved Slack token!", icon="🔌")
+            with col_t_test:
+                if st.button("🧪 Test Slack Connection", use_container_width=True):
+                    with st.spinner("Testing Slack token..."):
+                        ok, res = bot_logic.test_slack_token(get_active_token(), config.slack_api_url)
+                        if ok:
+                            st.success(f"Connected to **{res.get('team')}** as **@{res.get('user')}**!")
+                        else:
+                            st.error(f"Test failed: {res}")
+
+        with c_opt2:
+            st.markdown("###### 🔍 PD Search Keywords & Config File")
+            terms_text = st.text_area(
+                "Search Keywords (comma-separated)",
+                value=", ".join(config.search_list),
+                height=68,
+                help="Columns matching any of these terms are scanned for groups."
+            )
+            col_k_save, col_cfg_pop = st.columns(2)
+            with col_k_save:
+                if st.button("💾 Save Keywords", use_container_width=True):
+                    updated_terms = [t.strip() for t in terms_text.split(",") if t.strip()]
+                    cfg = config.load_config()
+                    cfg["search"]["terms"] = updated_terms
+                    config.save_config(cfg)
+                    config.search_list = updated_terms
+                    st.toast("Saved search keywords!", icon="🔍")
+            with col_cfg_pop:
+                with st.popover("📄 Import config.json", use_container_width=True):
+                    uploaded_cfg = st.file_uploader("Upload config.json", type=["json"], key="pop_cfg_upload")
+                    if uploaded_cfg is not None:
+                        try:
+                            cfg_data = json.loads(uploaded_cfg.getvalue().decode("utf-8"))
+                            if isinstance(cfg_data, dict):
+                                config.save_config(cfg_data)
+                                st.toast("Imported configuration!", icon="⚙️")
+                                st.rerun()
+                        except Exception as e:
+                            st.error(f"Error: {e}")
+
+    # -------------------------------------------------------------------------
+    # Primary Action: Parse Spreadsheet & Proceed
+    # -------------------------------------------------------------------------
+    st.markdown("---")
+    if "sheet" in st.session_state:
+        sheet = st.session_state["sheet"]
+        target_step_title = tab_groups_label.split(".", 1)[1].strip() if "." in tab_groups_label else tab_groups_label
+        if st.button(f"⚡ Parse Spreadsheet & Proceed to {target_step_title} ➡️", type="primary", use_container_width=True):
+            trigger_parse_comments(sheet)
+            st.success(f"✅ Spreadsheet parsed! Switch to **{tab_groups_label}** above to review.")
     else:
-        st.info("Please select or upload a spreadsheet above to begin.")
+        st.info("👈 Please select or upload a spreadsheet above to begin.")
 
 
 # =============================================================================
-# TAB 3: GROUP & MEMBER MANAGEMENT
+# TAB 2: REVIEW GROUPS & MEMBERS
 # =============================================================================
 with tab_groups:
     if "sheet" not in st.session_state:
-        st.warning("Please upload or select a spreadsheet in Step 2 (Spreadsheet & Setup) first.")
+        st.warning("Please upload or select a spreadsheet in Step 1 (Setup & Spreadsheet) first.")
     else:
         sheet = st.session_state["sheet"]
         headers = st.session_state.get("headers", bot_logic.get_sheet_headers(sheet))
         all_known_members = sorted(list(st.session_state["name_dict"].keys()))
 
         if config.mode == "PD":
-            st.subheader("👥 Performance Groups & Member Assignments")
+            st.subheader("👥 Step 2: Review Groups & Member Assignments")
             st.markdown(
                 "Configure each group's name, its corresponding group feedback column, "
                 "paired individual feedback column, and assign members to each group."
@@ -969,7 +952,7 @@ with tab_groups:
                     )
 
             # Expandable Membership Table
-            with st.expander("📋 View Membership Summary Table", expanded=len(all_assigned_members) > 0):
+            with st.expander("📋 View Membership Summary Table", expanded=False):
                 if all_assigned_members:
                     summary_data = []
                     for m in all_assigned_members:
@@ -986,14 +969,7 @@ with tab_groups:
                     st.info("No members assigned to any groups yet.")
 
             st.markdown("---")
-            c_head_grp, c_head_btn = st.columns([3, 1])
-            with c_head_grp:
-                st.markdown("### 🎛️ Group Configurations & Member Assignment")
-            with c_head_btn:
-                st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
-                if st.button("Generate Comments ➡️", key="btn_gen_top", type="primary", use_container_width=True):
-                    trigger_parse_comments(sheet)
-                    st.success(f"Parsed feedback for {len(st.session_state['full_messages'])} members!")
+            st.markdown("### 🎛️ Group Configurations & Member Assignment")
 
             # Column option mapping for dropdowns
             col_options = {idx + 1: f"Col {idx + 1}: {h}" for idx, h in enumerate(headers) if h}
@@ -1125,12 +1101,12 @@ with tab_groups:
                     st.markdown('</div>', unsafe_allow_html=True)
 
             st.markdown("---")
-            if st.button("Generate & Update Comments for Preview ➡️", key="btn_gen_bottom", type="primary", use_container_width=True):
+            if st.button("💬 Generate Comments & Proceed to Preview ➡️", key="btn_gen_bottom", type="primary", use_container_width=True):
                 trigger_parse_comments(sheet)
-                st.success(f"Parsed feedback for {len(st.session_state['full_messages'])} members!")
+                st.success(f"✅ Parsed feedback for {len(st.session_state['full_messages'])} members! Switch to **💬 3. Review Comments** above to inspect.")
 
         elif config.mode == "LC":
-            st.subheader("📋 Leadership Committee (LC) Individual Mapping")
+            st.subheader("📋 Step 2: Review Member Columns (LC Mode)")
             st.markdown("In LC mode, columns in the spreadsheet are mapped directly to member names.")
 
             matched_columns = []
@@ -1153,16 +1129,16 @@ with tab_groups:
             else:
                 st.warning("No columns in this spreadsheet directly match member names in name_list.json.")
 
-            if st.button("Generate LC Comments for Preview ➡️", type="primary", use_container_width=True):
+            if st.button("💬 Generate LC Comments & Proceed to Preview ➡️", type="primary", use_container_width=True):
                 trigger_parse_comments(sheet)
-                st.success(f"Parsed LC feedback for {len(st.session_state['full_messages'])} members!")
+                st.success(f"✅ Parsed LC feedback for {len(st.session_state['full_messages'])} members! Switch to **💬 3. Review Comments** above to inspect.")
 
 
 # =============================================================================
-# TAB 4: PREVIEW SAMPLE COMMENTS
+# TAB 3: PREVIEW SAMPLE COMMENTS
 # =============================================================================
 with tab_preview:
-    st.subheader("💬 Step 4: Sample & Comment Preview")
+    st.subheader("💬 Step 3: Review Sample Comments")
     st.markdown("Review the exact message formatted for each member before dispatching.")
 
     # Automatically parse if not already parsed or if parsed under a different mode
@@ -1173,7 +1149,7 @@ with tab_preview:
     full_msgs = st.session_state.get("full_messages", {})
 
     if not full_msgs:
-        st.warning("No comments generated yet. Please ensure members are assigned in Step 3 and click 'Generate Comments'.")
+        st.warning("No comments generated yet. Please ensure groups or columns are configured in Step 2 and click 'Generate Comments'.")
     else:
         recipients = sorted(list(full_msgs.keys()))
 
@@ -1189,7 +1165,7 @@ with tab_preview:
         col_m4.metric("Avg Message Length", f"{avg_len} chars")
 
         if missing_ids:
-            st.warning(f"⚠️ The following {len(missing_ids)} members have comments but no Slack ID in name_list.json: {', '.join(missing_ids)}. You can add their Slack IDs in Step 1 (Configuration & Roster).")
+            st.warning(f"⚠️ The following {len(missing_ids)} members have comments but no Slack ID in name_list.json: {', '.join(missing_ids)}. You can add their Slack IDs in Step 1 (Setup & Spreadsheet).")
 
         st.markdown("---")
 
@@ -1270,15 +1246,15 @@ with tab_preview:
 
 
 # =============================================================================
-# TAB 5: REVIEW & SEND
+# TAB 4: SEND COMMENTS TO SLACK
 # =============================================================================
 with tab_send:
-    st.subheader("🚀 Step 5: Review & Dispatch Messages to Slack")
+    st.subheader("🚀 Step 4: Send Comments to Slack")
     st.markdown("Send verified personal feedback directly to members via the Slack Bot.")
 
     full_msgs = st.session_state.get("full_messages", {})
     if not full_msgs:
-        st.warning("No comments ready to send. Please configure groups in Step 3 and preview in Step 4.")
+        st.warning("No comments ready to send. Please configure groups in Step 2 and preview in Step 3.")
     else:
         recipients = sorted(list(full_msgs.keys()))
 

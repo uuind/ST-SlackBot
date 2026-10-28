@@ -46,12 +46,23 @@ Launch the interactive web application:
 streamlit run app.py
 ```
 
-### GUI Workflow:
-1. **⚙️ Step 1: Configuration & Roster**: Upload your `config.json` and member roster JSON (`name_list.json`), edit settings or search terms, test Slack authentication, and manage or download member directories.
-2. **📁 Step 2: Spreadsheet & Setup**: Upload `.xlsx` performance forms, leverage automatic PD vs LC format detection, view headers and sample rows.
-3. **👥 Step 3: Group & Member Management**: Review detected groups, assign members with intuitive multi-selects (supporting custom-typed additions), and use **"Auto-Detect All"** or per-group detection to discover members mentioned in the feedback.
-4. **💬 Step 4: Preview Sample Comments**: Inspect authentic Slack DM previews with simulated dark mode, view section breakdowns, and verify member formatting.
-5. **🚀 Step 5: Review & Send**: Send a test message first to verify authentication, filter recipients, and dispatch live Slack feedback with progress tracking and delivery logs.
+### Streamlined 4-Step GUI Workflow:
+1. **📂 Step 1: Setup & Spreadsheet**:
+   - **Member Roster (`name_list.json`)**: Click **"🤖 Fetch Slack (`users:read`)"** to pull active workspace members, **"📁 Import JSON"** to upload an existing directory, or **"📥 Export JSON"** to download the online copy. Expand **"View & Edit Member Names"** anytime to adjust spreadsheet names.
+   - **Spreadsheet & Auto Mode Detection**: Select or upload an `.xlsx` form. ST-SlackBot automatically detects whether it's in **PD Mode** (performance/group songs) or **LC Mode** (committee feedback columns) and lets you customize the **Message Header Banner** at the top of each DM.
+   - **Optional Settings**: Collapsible menu for Slack bot token test/save, search keywords, and `config.json` import.
+   - Click **"⚡ Parse Spreadsheet & Proceed to Review Groups ➡️"** to advance.
+2. **👥 Step 2: Review Groups** (or **Review Member Columns** in LC mode):
+   - Review detected groups and columns.
+   - In PD mode, use **"🪄 Auto-Detect All from Comments"** to scan comments for member names, assign members via multi-selects (with custom name typing), and check unassigned member warnings.
+   - Click **"💬 Generate Comments & Proceed to Preview ➡️"**.
+3. **💬 Step 3: Review Comments**:
+   - Inspect authentic Slack DM previews with simulated dark/light themes.
+   - Cycle through members via dropdown or **"🎲 View Random Sample"**, inspect section breakdowns, and audit all recipients.
+4. **🚀 Step 4: Send Comments to Slack**:
+   - Filter or select recipients via the readiness checklist.
+   - Use the **"Optional: Send Test Message First"** form to deliver a sample exclusively to your own test Slack ID.
+   - Confirm and click **"🚀 Send Slack Messages"** with live progress tracking and delivery logs.
 
 ---
 
