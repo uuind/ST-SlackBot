@@ -31,7 +31,7 @@ def run_slackbot_process():
 
     # Auto-detect mode from sheet headers
     detected_mode, detect_reason, _ = bot_logic.detect_spreadsheet_mode(
-        headers, known_members, config.search_list
+        headers, known_members, config.group_search_list, config.indiv_search_list
     )
     print(f"🤖 Auto-detected spreadsheet format: {detected_mode} Mode ({detect_reason})")
 
@@ -47,7 +47,7 @@ def run_slackbot_process():
 
     # 3. Process according to mode
     if config.mode == "PD":
-        paired, _, _ = bot_logic.detect_groups_pd(headers, config.search_list)
+        paired, _, _ = bot_logic.detect_groups_pd(headers, config.group_search_list, config.indiv_search_list)
         if not paired:
             print("No groups matching search terms found in headers.")
             return

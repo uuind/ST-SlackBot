@@ -17,7 +17,9 @@ slack_token = ""
 slack_api_url = "https://slack.com/api/"
 name_filepath = "name_list.json"
 form_filepath = ""
-search_list = ["Group", "Ensemble", "Arashi", "Three Sizz", "Individual"]
+group_search_list = ["Group", "Ensemble", "Feedback", "Comments", "Notes", "Arashi", "Three Sizz", "3 Sizzlin"]
+indiv_search_list = ["Individual", "Indiv", "Solo"]
+search_list = group_search_list + indiv_search_list
 mode = "PD"
 spreadsheet_folder = "spreadsheets"
 form_file = ""
@@ -55,7 +57,7 @@ def get_token_from_secrets():
 
 def load_config(config_file=CONFIG_FILE):
     """Load configuration from config.json and Streamlit secrets."""
-    global slack_token, slack_api_url, name_filepath, form_filepath, search_list, mode, spreadsheet_folder, form_file
+    global slack_token, slack_api_url, name_filepath, form_filepath, search_list, mode, spreadsheet_folder, form_file, group_search_list, indiv_search_list
 
     config = {}
     if os.path.exists(config_file):
@@ -67,9 +69,23 @@ def load_config(config_file=CONFIG_FILE):
     spreadsheet_folder = config.get('file', {}).get('spreadsheet_folder', 'spreadsheets')
     form_file = config.get('file', {}).get('form_file', '')
     form_filepath = os.path.join(spreadsheet_folder, form_file) if form_file else ""
-    search_list = config.get('search', {}).get('terms', ["Group", "Ensemble", "Arashi", "Three Sizz", "Individual"])
-    mode = config.get('mode', 'PD')
 
+    search_cfg = config.get('search', {})
+    if 'group_terms' in search_cfg or 'indiv_terms' in search_cfg:
+        group_search_list = search_cfg.get('group_terms', ["Group", "Ensemble", "Feedback", "Comments", "Notes", "Arashi", "Three Sizz", "3 Sizzlin"])
+        indiv_search_list = search_cfg.get('indiv_terms', ["Individual", "Indiv", "Solo"])
+        search_list = group_search_list + indiv_search_list
+    else:
+        legacy_terms = search_cfg.get('terms', ["Group", "Ensemble", "Arashi", "Three Sizz", "Individual"])
+        group_search_list = [t for t in legacy_terms if "individual" not in t.lower() and "indiv" not in t.lower()]
+        indiv_search_list = [t for t in legacy_terms if "individual" in t.lower() or "indiv" in t.lower()]
+        if not indiv_search_list:
+            indiv_search_list = ["Individual", "Indiv", "Solo"]
+        if not group_search_list:
+            group_search_list = ["Group", "Ensemble", "Feedback", "Comments", "Notes"]
+        search_list = legacy_terms
+
+    mode = config.get('mode', 'PD')
     slack_token = get_token_from_secrets() or config.get('slack', {}).get('token', '')
 
     return config
@@ -79,7 +95,7 @@ def save_config(config_dict, config_file=CONFIG_FILE):
     """Save configuration dictionary to config.json and reload in-memory variables.
     Returns (config_dict, saved_to_disk: bool).
     """
-    global slack_api_url, name_filepath, spreadsheet_folder, form_file, form_filepath, search_list, mode
+    global slack_api_url, name_filepath, spreadsheet_folder, form_file, form_filepath, search_list, mode, group_search_list, indiv_search_list
     saved_to_disk = False
     try:
         with open(config_file, 'w', encoding='utf-8') as f:
@@ -93,7 +109,13 @@ def save_config(config_dict, config_file=CONFIG_FILE):
     spreadsheet_folder = config_dict.get('file', {}).get('spreadsheet_folder', spreadsheet_folder)
     form_file = config_dict.get('file', {}).get('form_file', form_file)
     form_filepath = os.path.join(spreadsheet_folder, form_file) if form_file else ""
-    search_list = config_dict.get('search', {}).get('terms', search_list)
+
+    search_cfg = config_dict.get('search', {})
+    if 'group_terms' in search_cfg:
+        group_search_list = search_cfg['group_terms']
+    if 'indiv_terms' in search_cfg:
+        indiv_search_list = search_cfg['indiv_terms']
+    search_list = search_cfg.get('terms', group_search_list + indiv_search_list)
     mode = config_dict.get('mode', mode)
 
     return config_dict, saved_to_disk

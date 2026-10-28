@@ -120,7 +120,7 @@ def get_sheet_headers(sheet):
         return []
 
 
-def detect_spreadsheet_mode(headers, known_members, search_terms):
+def detect_spreadsheet_mode(headers, known_members, group_terms=None, indiv_terms=None):
     """
     Automatically detects whether a spreadsheet is 'LC' or 'PD' mode based on headers.
     Returns:
@@ -128,9 +128,19 @@ def detect_spreadsheet_mode(headers, known_members, search_terms):
     - reason: explanation string
     - details: dict with counts and matching columns
     """
+    if group_terms is None:
+        group_terms = ["Group", "Ensemble", "Feedback", "Comments", "Notes", "Arashi", "Three Sizz", "3 Sizzlin"]
+    if indiv_terms is None:
+        if isinstance(group_terms, list) and any("indiv" in t.lower() or "individual" in t.lower() for t in group_terms):
+            indiv_terms = [t for t in group_terms if "indiv" in t.lower() or "individual" in t.lower()]
+            group_terms = [t for t in group_terms if "indiv" not in t.lower() and "individual" not in t.lower()]
+        else:
+            indiv_terms = ["Individual", "Indiv", "Solo"]
+
+    all_pd_terms = list(group_terms) + list(indiv_terms)
     known_set = {m.strip().lower() for m in known_members if m.strip()}
     lc_matches = [h for h in headers if h and h.strip().lower() in known_set]
-    pd_matches = [h for h in headers if h and any(t.lower() in h.lower() for t in search_terms)]
+    pd_matches = [h for h in headers if h and any(t.lower() in h.lower() for t in all_pd_terms)]
 
     if len(lc_matches) >= 3 and len(lc_matches) > len(pd_matches):
         mode = "LC"
@@ -153,20 +163,34 @@ import re
 
 STOP_WORDS = {
     'group', 'individual', 'feedback', 'comments', 'please', 'include', 'write',
-    'who', 'the', 'comment', 'is', 'for', 'run', 'their', 'name', 'notes', 'and', 'with'
+    'who', 'the', 'comment', 'is', 'for', 'run', 'their', 'name', 'notes', 'and', 'with',
+    'no', 'of', 'in', 'on', 'at', 'to', 'a', 'an'
 }
 
 
 def _extract_header_tokens(text):
     clean = re.sub(r'[^\w\s]', ' ', str(text).lower())
-    return {w for w in clean.split() if w not in STOP_WORDS}
+    tokens = {w for w in clean.split() if w not in STOP_WORDS}
+    words = {w for w in tokens if not w.isdigit()}
+    nums = {w for w in tokens if w.isdigit()}
+    return words, nums
 
 
-def detect_groups_pd(headers, search_terms):
+def detect_groups_pd(headers, group_terms=None, indiv_terms=None):
     """
     Identify potential group columns and intelligently paired individual columns in PD mode.
-    Handles any number of groups (2, 3, 4, 5, 6, etc.) and standalone group columns.
+    Handles any number of groups and standalone group columns without individual counterparts.
     """
+    if group_terms is None:
+        group_terms = ["Group", "Ensemble", "Feedback", "Comments", "Notes", "Arashi", "Three Sizz", "3 Sizzlin"]
+    if indiv_terms is None:
+        # Check if caller passed a single combined search_terms list
+        if isinstance(group_terms, list) and any("indiv" in t.lower() or "individual" in t.lower() for t in group_terms):
+            indiv_terms = [t for t in group_terms if "indiv" in t.lower() or "individual" in t.lower()]
+            group_terms = [t for t in group_terms if "indiv" not in t.lower() and "individual" not in t.lower()]
+        else:
+            indiv_terms = ["Individual", "Indiv", "Solo"]
+
     group_cols = []
     indiv_cols = []
 
@@ -175,55 +199,82 @@ def detect_groups_pd(headers, search_terms):
             continue
         col_number = idx + 1
         h_lower = header.lower()
-        if "individual" in h_lower:
+
+        is_indiv = any(term.lower() in h_lower for term in indiv_terms)
+        is_group = any(term.lower() in h_lower for term in group_terms)
+
+        if is_indiv:
+            words, nums = _extract_header_tokens(header)
             indiv_cols.append({
                 "col": col_number,
                 "name": header,
-                "tokens": _extract_header_tokens(header)
+                "words": words,
+                "nums": nums
             })
-        elif any(term.lower() in h_lower for term in search_terms):
+        elif is_group:
+            words, nums = _extract_header_tokens(header)
             group_cols.append({
                 "col": col_number,
                 "name": header,
-                "tokens": _extract_header_tokens(header)
+                "words": words,
+                "nums": nums
             })
 
-    paired_groups = []
-    used_indiv_cols = set()
+    g_col_set = {g["col"] for g in group_cols}
 
+    # Evaluate candidate pairs
+    candidate_pairs = []
     for g in group_cols:
-        best_indiv = None
-        best_score = 0
         for i in indiv_cols:
-            if i["col"] in used_indiv_cols:
+            if i["col"] <= g["col"]:
                 continue
-            overlap = len(g["tokens"] & i["tokens"])
-            score = overlap
-            # If immediately adjacent and has common tokens or indiv follows immediately
-            if i["col"] == g["col"] + 1 and overlap > 0:
-                score += 2
-            elif i["col"] == g["col"] + 1 and len(g["tokens"]) == 0:
+            # Structural Form Rule: No other group column can intervene between g and i
+            intervening = [gc for gc in g_col_set if g["col"] < gc < i["col"]]
+            if intervening:
+                continue
+
+            word_overlap = len(g["words"] & i["words"])
+            num_overlap = len(g["nums"] & i["nums"])
+            dist = i["col"] - g["col"]
+
+            score = 0
+            # Adjacency bonus (individual question follows group question)
+            if dist == 1:
+                score += 10
+            elif dist == 2:
+                score += 5
+            else:
                 score += 1
 
-            if score > best_score:
-                best_score = score
-                best_indiv = i
+            if word_overlap > 0:
+                score += word_overlap * 10
+            if num_overlap > 0 and word_overlap > 0:
+                score += num_overlap * 2
 
-        if best_indiv and best_score > 0:
-            used_indiv_cols.add(best_indiv["col"])
-            paired_groups.append({
-                "group_name": g["name"],
-                "group_col": g["col"],
-                "indiv_name": best_indiv["name"],
-                "indiv_col": best_indiv["col"],
-            })
-        else:
-            paired_groups.append({
-                "group_name": g["name"],
-                "group_col": g["col"],
-                "indiv_name": None,
-                "indiv_col": None,
-            })
+            candidate_pairs.append((score, g["col"], i["col"], g, i))
+
+    # Sort candidates by score descending for optimal global pairing
+    candidate_pairs.sort(key=lambda x: x[0], reverse=True)
+
+    paired_dict = {}
+    used_indiv = set()
+    used_group = set()
+
+    for score, g_col, i_col, g, i in candidate_pairs:
+        if g_col not in used_group and i_col not in used_indiv and score > 0:
+            paired_dict[g_col] = i
+            used_group.add(g_col)
+            used_indiv.add(i_col)
+
+    paired_groups = []
+    for g in group_cols:
+        i = paired_dict.get(g["col"])
+        paired_groups.append({
+            "group_name": g["name"],
+            "group_col": g["col"],
+            "indiv_name": i["name"] if i else None,
+            "indiv_col": i["col"] if i else None
+        })
 
     return paired_groups, group_cols, indiv_cols
 
@@ -329,15 +380,16 @@ def build_header_block(header_title):
     if not header_title or not str(header_title).strip():
         return ""
     title = str(header_title).strip().strip("*").strip()
-    if not any(title.startswith(p) for p in ("📝", "📢", "🥁", "Feedback")):
-        title = f"Feedback: {title}"
-    return f"*📝 {title}*\n{'=' * 32}\n\n"
+    clean_title = title.replace("(Responses)", "").replace("  ", " ").strip()
+    if "feedback" not in clean_title.lower():
+        clean_title += " Feedback"
+    return f"*{clean_title}*\n{'=' * 32}\n\n"
 
 
 def format_pd_message(sections, header_title=""):
     """
     Format PD sections into the exact Slack message format:
-    *📝 Feedback: <Spreadsheet Name>*
+    *<Spreadsheet Name>*
     ================================
 
     *Section Name*
@@ -390,7 +442,7 @@ def parse_lc_comments(sheet, person_list, header_title=""):
 def format_lc_message(comments, header_title=""):
     """
     Format LC comments into Slack message format:
-    *📝 Feedback: <Spreadsheet Name>*
+    *<Spreadsheet Name>*
     ================================
 
     *Personal Feedback*

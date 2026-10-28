@@ -8,11 +8,30 @@
     "form_file": "Tales-MPP-Winter-2026.xlsx"
   },
   "search": {
+    "group_terms": [
+      "Group",
+      "Ensemble",
+      "Feedback",
+      "Comments",
+      "Notes",
+      "Arashi",
+      "Three Sizz",
+      "3 Sizzlin"
+    ],
+    "indiv_terms": [
+      "Individual",
+      "Indiv",
+      "Solo"
+    ],
     "terms": [
       "Group",
       "Ensemble",
+      "Feedback",
+      "Comments",
+      "Notes",
       "Arashi",
       "Three Sizz",
+      "3 Sizzlin",
       "Individual"
     ]
   },
