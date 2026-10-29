@@ -82,6 +82,32 @@ flowchart LR
 
 ---
 
+## 🧭 Interactive Help Guide Mode
+
+ST-SlackBot includes a built-in help overlay:
+
+- **Toggle On/Off**: Click the **"🧭 Guide"** button in the main header (or sidebar) anytime to activate Help Guide Mode.
+- **Interactive Hover Tooltips**: Glowing purple `?` badges appear beside key headings, buttons, dropdowns, and cards. Hovering over any badge reveals a tooltip with:
+  - Component title & description
+  - Workflow requirements
+  - Actionable pro-tips (e.g. keyboard shortcuts, formatting rules)
+- **Searchable Index**: An expandable **"📖 Interactive Component Guide Index"** allows you to search and review explanations for all 45+ components across all 4 steps.
+- **Zero Distraction in Production**: When Guide Mode is toggled off, badges and overlays are completely hidden.
+
+---
+
+## 🌐 Localization & Phrase Customization (`locales/`)
+
+All interface text, labels, messages, and help explanations are decoupled from application logic into structured JSON files:
+
+- **`locales/en.json`**: Centralizes all UI strings (button labels, section headers, warning messages, dialogs) into clean hierarchical categories (`auth`, `header`, `nav`, `setup`, `groups`, `preview`, `send`).
+- **`locales/guide_explanations.json`**: Contains explanations, instructions, and tips for all interactive help badges.
+- **`i18n.py`**: Provides translation lookup (`i18n.t("setup.roster_heading")`) with dynamic formatting (`{count}`, `{mode}`), defensive fallbacks, and tooltip rendering (`i18n.guide_badge(...)`).
+
+To customize wording or adjust guide tips, simply edit the corresponding JSON file in `locales/` without modifying Python code.
+
+---
+
 ## 💻 Running via CLI
 
 You can also run the command-line runner directly:

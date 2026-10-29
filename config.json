@@ -23,16 +23,13 @@
       "Indiv",
       "Solo"
     ],
-    "terms": [
-      "Group",
-      "Ensemble",
-      "Feedback",
-      "Comments",
-      "Notes",
-      "Arashi",
-      "Three Sizz",
-      "3 Sizzlin",
-      "Individual"
+    "exclude_terms": [
+      "PDs",
+      "ADs",
+      "Directors",
+      "Leadership",
+      "Timestamp",
+      "Your name"
     ]
   },
   "mode": "PD"

@@ -120,7 +120,52 @@ def get_sheet_headers(sheet):
         return []
 
 
-def detect_spreadsheet_mode(headers, known_members, group_terms=None, indiv_terms=None):
+def is_excluded_group_header(header: str, exclude_terms=None) -> bool:
+    """
+    Returns True if a header is metadata, reviewer identification, instructions,
+    or general feedback/questions directed to organizers/directors (PDs, ADs, leadership)
+    rather than a song or performance group feedback column.
+    """
+    h = str(header).lower().strip()
+    if not h:
+        return True
+
+    # Form submission metadata & reviewer identification
+    if h in {"timestamp", "name", "your name"} or h.startswith("timestamp"):
+        return True
+    if "please sign your name" in h or "this is the end" in h:
+        return True
+
+    # Configured excluded terms
+    if exclude_terms is None:
+        try:
+            import config
+            exclude_terms = getattr(config, "exclude_search_list", None)
+        except Exception:
+            exclude_terms = None
+
+    if exclude_terms:
+        for term in exclude_terms:
+            t = str(term).strip().lower()
+            if t and t in h:
+                return True
+
+    # General questions / feedback specifically directed to PDs, ADs, leadership, or directors
+    pd_ad_patterns = [
+        r'\bfor\s+(?:the\s+)?(?:pds?|ads?|pds?/ads?|directors?|leadership)\b',
+        r'\bto\s+(?:the\s+)?(?:pds?|ads?|pds?/ads?|directors?|leadership)\b',
+        r'\b(?:notes|questions?|comments?|feedback)\s+(?:on\s+mpp\s+)?for\s+(?:the\s+)?pds?',
+        r'\bpds?/ads?\b',
+        r'\bnotes\s+for\s+pds?\b'
+    ]
+    for pat in pd_ad_patterns:
+        if re.search(pat, h):
+            return True
+
+    return False
+
+
+def detect_spreadsheet_mode(headers, known_members, group_terms=None, indiv_terms=None, exclude_terms=None):
     """
     Automatically detects whether a spreadsheet is 'LC' or 'PD' mode based on headers.
     Returns:
@@ -140,7 +185,10 @@ def detect_spreadsheet_mode(headers, known_members, group_terms=None, indiv_term
     all_pd_terms = list(group_terms) + list(indiv_terms)
     known_set = {m.strip().lower() for m in known_members if m.strip()}
     lc_matches = [h for h in headers if h and h.strip().lower() in known_set]
-    pd_matches = [h for h in headers if h and any(t.lower() in h.lower() for t in all_pd_terms)]
+    pd_matches = [
+        h for h in headers
+        if h and not is_excluded_group_header(h, exclude_terms=exclude_terms) and any(t.lower() in h.lower() for t in all_pd_terms)
+    ]
 
     if len(lc_matches) >= 3 and len(lc_matches) > len(pd_matches):
         mode = "LC"
@@ -176,7 +224,7 @@ def _extract_header_tokens(text):
     return words, nums
 
 
-def detect_groups_pd(headers, group_terms=None, indiv_terms=None):
+def detect_groups_pd(headers, group_terms=None, indiv_terms=None, exclude_terms=None):
     """
     Identify potential group columns and intelligently paired individual columns in PD mode.
     Handles any number of groups and standalone group columns without individual counterparts.
@@ -195,7 +243,7 @@ def detect_groups_pd(headers, group_terms=None, indiv_terms=None):
     indiv_cols = []
 
     for idx, header in enumerate(headers):
-        if not header:
+        if not header or is_excluded_group_header(header, exclude_terms=exclude_terms):
             continue
         col_number = idx + 1
         h_lower = header.lower()

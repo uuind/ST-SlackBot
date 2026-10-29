@@ -7,16 +7,19 @@ from collections import defaultdict
 import streamlit as st
 import pandas as pd
 from pathlib import Path
+import html
 
 import config
 import bot_logic
 import auth
+import i18n
 
 # Force reload helper modules so Streamlit Cloud picks up newly added functions without stale cache
 try:
     importlib.reload(config)
     importlib.reload(bot_logic)
     importlib.reload(auth)
+    importlib.reload(i18n)
 except Exception:
     pass
 
@@ -60,7 +63,7 @@ st.set_page_config(
     page_title="ST SlackBot",
     page_icon="🥁",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
 # Custom CSS for styling
@@ -109,15 +112,259 @@ st.markdown("""
         font-size: 0.8rem;
         font-weight: 600;
     }
-    .group-card {
-        background-color: #f9fafb;
-        border: 1px solid #e5e7eb;
+    /* Distinct Group Assignment Card Styling & Separation */
+    .group-card-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        background: linear-gradient(90deg, rgba(99, 102, 241, 0.22) 0%, rgba(99, 102, 241, 0.05) 100%);
+        border-left: 5px solid #6366f1;
+        padding: 8px 14px;
+        border-radius: 6px;
+        margin-bottom: 14px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    }
+    .group-badge-num {
+        background: linear-gradient(135deg, #6366f1, #4f46e5);
+        color: #ffffff;
+        font-size: 0.76rem;
+        font-weight: 700;
+        padding: 3px 8px;
+        border-radius: 4px;
+        letter-spacing: 0.6px;
+    }
+    .group-member-count {
+        font-size: 0.85rem;
+        color: #cbd5e1;
+        font-weight: 500;
+    }
+    div[data-testid="stVerticalBlock"] > div[data-testid="stVerticalBlockBorderWrapper"]:has(.group-card-header) {
+        border: 1px solid rgba(99, 102, 241, 0.35) !important;
+        border-left: 5px solid #6366f1 !important;
+        border-radius: 10px !important;
+        background-color: rgba(30, 41, 59, 0.25) !important;
+        box-shadow: 0 4px 14px -3px rgba(0, 0, 0, 0.25) !important;
+        margin-bottom: 22px !important;
+        transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    }
+    div[data-testid="stVerticalBlock"] > div[data-testid="stVerticalBlockBorderWrapper"]:has(.group-card-header):hover {
+        border-color: rgba(99, 102, 241, 0.65) !important;
+        box-shadow: 0 6px 18px -2px rgba(99, 102, 241, 0.2) !important;
+    }
+    /* Guide Mode & Hover Overlay Tooltip Styles */
+    .guide-banner {
+        background: linear-gradient(90deg, #312e81 0%, #4338ca 100%);
+        color: #ffffff;
         border-radius: 8px;
-        padding: 1rem;
-        margin-bottom: 1rem;
+        padding: 0.75rem 1.1rem;
+        margin-bottom: 0.8rem;
+        box-shadow: 0 4px 6px -1px rgba(79, 70, 229, 0.25);
+        border: 1px solid #6366f1;
+        font-size: 0.9rem;
+    }
+    .guide-sample-badge {
+        background: #f59e0b;
+        color: #1e1b4b;
+        border-radius: 50%;
+        display: inline-flex;
+        width: 17px;
+        height: 17px;
+        align-items: center;
+        justify-content: center;
+        font-weight: 800;
+        font-size: 11px;
+    }
+    /* Permanently visible sidebar collapse & expand controls */
+    div[data-testid="stSidebarCollapseButton"],
+    div[data-testid="stSidebarCollapseButton"] button,
+    button[aria-label="Collapse sidebar"] {
+        visibility: visible !important;
+        display: inline-flex !important;
+        opacity: 1 !important;
+    }
+    div[data-testid="stExpandSidebarButton"],
+    div[data-testid="stExpandSidebarButton"] button,
+    button[aria-label="Expand sidebar"],
+    [data-testid="collapsedControl"] {
+        visibility: visible !important;
+        display: inline-flex !important;
+        opacity: 1 !important;
+    }
+    [data-testid="stExpandSidebarButton"] button,
+    button[aria-label="Expand sidebar"] {
+        background-color: #1e1b4b !important;
+        color: #ffffff !important;
+        border: 1px solid #6366f1 !important;
+        border-radius: 8px !important;
+        box-shadow: 0 2px 8px rgba(99, 102, 241, 0.4) !important;
+        padding: 4px 8px !important;
+        cursor: pointer !important;
+    }
+    [data-testid="stSidebarCollapseButton"] button {
+        background-color: rgba(99, 102, 241, 0.15) !important;
+        border: 1px solid #6366f1 !important;
+        border-radius: 6px !important;
+    }
+    /* Sidebar Tooltips: Stay inside sidebar bounds and hover above everything */
+    section[data-testid="stSidebar"] {
+        z-index: 9999999 !important;
+    }
+    [data-testid="stSidebar"] .guide-target {
+        position: relative !important;
+    }
+    [data-testid="stSidebar"] .guide-tooltip {
+        left: auto !important;
+        right: 0 !important;
+        width: 250px !important;
+        max-width: 80vw !important;
+    }
+    [data-testid="stSidebar"] .guide-tooltip::after {
+        left: auto !important;
+        right: 14px !important;
+    }
+    /* Workflow Stepper Navigation */
+    div[data-testid="stSegmentedControl"] {
+        display: flex !important;
+        justify-content: center !important;
+        margin-bottom: 1.2rem !important;
+    }
+    div[data-testid="stSegmentedControl"] button {
+        font-weight: 600 !important;
+        font-size: 0.95rem !important;
+        padding: 6px 20px !important;
+    }
+    /* Ensure Step 1 left (Roster) and right (Spreadsheet) containers are always the exact same height */
+    [data-testid="stHorizontalBlock"]:has([data-testid="stDataEditor"]) {
+        display: flex !important;
+        align-items: stretch !important;
+    }
+    [data-testid="stHorizontalBlock"]:has([data-testid="stDataEditor"]) > [data-testid="column"] {
+        display: flex !important;
+        flex-direction: column !important;
+    }
+    [data-testid="stHorizontalBlock"]:has([data-testid="stDataEditor"]) > [data-testid="column"] > [data-testid="stVerticalBlockBorderWrapper"] {
+        display: flex !important;
+        flex-direction: column !important;
+        flex: 1 !important;
+        height: 100% !important;
+        min-height: 540px !important;
+    }
+    [data-testid="stHorizontalBlock"]:has([data-testid="stDataEditor"]) > [data-testid="column"] > [data-testid="stVerticalBlockBorderWrapper"] > [data-testid="stVerticalBlock"] {
+        display: flex !important;
+        flex-direction: column !important;
+        flex: 1 !important;
+        height: 100% !important;
+    }
+    [data-testid="column"] {
+        overflow: visible !important;
+    }
+    div[data-testid="stMarkdownContainer"] {
+        overflow: visible !important;
+    }
+    .guide-target {
+        position: relative;
+        display: inline-block;
+        vertical-align: middle;
+        margin-left: 6px;
+        cursor: help;
+    }
+    .guide-badge {
+        background: linear-gradient(135deg, #6366f1, #8b5cf6);
+        color: #ffffff !important;
+        font-size: 0.72rem;
+        font-weight: 700;
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 0 8px rgba(99, 102, 241, 0.7);
+        border: 1px solid rgba(255, 255, 255, 0.4);
+        transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+    }
+    .guide-target:hover .guide-badge {
+        transform: scale(1.3);
+        box-shadow: 0 0 12px rgba(245, 158, 11, 0.95);
+        background: linear-gradient(135deg, #f59e0b, #d97706);
+    }
+    .guide-tooltip {
+        display: none !important;
+        position: absolute;
+        z-index: 999999999 !important;
+        top: calc(100% + 8px);
+        left: -8px;
+        transform: none;
+        width: 320px;
+        max-width: min(340px, 85vw);
+        background-color: #0f172a;
+        color: #f8fafc;
+        padding: 10px 14px;
+        border-radius: 8px;
+        border: 1px solid #6366f1;
+        box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.6), 0 8px 10px -6px rgba(0, 0, 0, 0.4);
+        pointer-events: none;
+        font-size: 0.85rem;
+        line-height: 1.45;
+        text-align: left;
+        white-space: normal;
+    }
+    .guide-tooltip::after {
+        content: "";
+        position: absolute;
+        bottom: 100%;
+        left: 12px;
+        margin-left: 0;
+        border-width: 6px;
+        border-style: solid;
+        border-color: transparent transparent #0f172a transparent;
+    }
+    /* Auto-anchor right for right-aligned containers (e.g. mode badge) */
+    [style*="text-align: right"] .guide-tooltip,
+    .guide-target-right .guide-tooltip {
+        left: auto !important;
+        right: 0 !important;
+    }
+    [style*="text-align: right"] .guide-tooltip::after,
+    .guide-target-right .guide-tooltip::after {
+        left: auto !important;
+        right: 12px !important;
+    }
+    .guide-target:hover .guide-tooltip {
+        display: block !important;
+    }
+    .guide-tooltip-title {
+        display: block;
+        font-weight: 700;
+        font-size: 0.92rem;
+        color: #38bdf8;
+        margin-bottom: 5px;
+        border-bottom: 1px solid #334155;
+        padding-bottom: 3px;
+    }
+    .guide-tooltip-desc {
+        display: block;
+        color: #e2e8f0;
+        margin-bottom: 6px;
+        font-size: 0.82rem;
+    }
+    .guide-tooltip-tip {
+        display: block;
+        background-color: rgba(245, 158, 11, 0.15);
+        border-left: 3px solid #f59e0b;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 0.78rem;
+        color: #fef3c7;
+        margin-top: 4px;
     }
 </style>
 """, unsafe_allow_html=True)
+
+
+def gb(key: str) -> str:
+    """Helper to render guide badge HTML when guide mode is enabled."""
+    return i18n.guide_badge(key, is_active=st.session_state.get("guide_mode", False))
 
 
 # -----------------------------------------------------------------------------
@@ -157,6 +404,52 @@ if "slack_token" not in st.session_state:
 
 if "name_list_source" not in st.session_state:
     st.session_state["name_list_source"] = config.name_filepath
+
+if "guide_mode" not in st.session_state:
+    st.session_state["guide_mode"] = False
+
+if "current_step" not in st.session_state:
+    st.session_state["current_step"] = 1
+
+if "sidebar_auto_collapsed" not in st.session_state:
+    st.session_state["sidebar_auto_collapsed"] = True
+    import streamlit.components.v1 as components
+    components.html("""
+    <script>
+    (function() {
+        try {
+            const pDoc = window.parent.document;
+            // 1. Ensure initial sidebar state is collapsed on first load
+            const sidebar = pDoc.querySelector('[data-testid="stSidebar"]');
+            if (sidebar && sidebar.getAttribute('aria-expanded') !== 'false' && sidebar.getAttribute('data-collapsed') !== 'true') {
+                const btn = pDoc.querySelector('button[aria-label="Collapse sidebar"]') || pDoc.querySelector('[data-testid="stSidebarCollapseButton"] button');
+                if (btn) {
+                    btn.click();
+                } else {
+                    const content = pDoc.querySelector('[data-testid="stSidebarContent"]');
+                    if (content) {
+                        content.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+                        setTimeout(() => {
+                            const b = pDoc.querySelector('button[aria-label="Collapse sidebar"]') || pDoc.querySelector('[data-testid="stSidebarCollapseButton"] button');
+                            if (b) b.click();
+                        }, 80);
+                    }
+                }
+            }
+            // 2. Keep the collapse button mounted in React so it remains permanently visible
+            function keepCollapseMounted() {
+                try {
+                    const c = pDoc.querySelector('[data-testid="stSidebarContent"]');
+                    if (c) {
+                        c.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+                    }
+                } catch(err) {}
+            }
+            setInterval(keepCollapseMounted, 1200);
+        } catch(e) {}
+    })();
+    </script>
+    """, height=0, width=0)
 
 
 # -----------------------------------------------------------------------------
@@ -255,22 +548,22 @@ if not st.session_state.get("authenticated"):
                     st.error(err_msg)
 
         with st.expander("ℹ️ Configuring user accounts on Streamlit Cloud", expanded=False):
-            st.markdown("""
-            In your Streamlit Cloud **App Settings → Secrets** (or `.streamlit/secrets.toml` locally):
-            ```toml
-            [users]
-            admin = "admin_password"
-            audrey = "audrey_password"
-            pd_lead = "pd_team_password"
-            ```
-            *(Default local fallback: username `admin` / password `taiko`)*
-            """)
+            st.markdown(
+                "In your Streamlit Cloud **App Settings → Secrets** (or `.streamlit/secrets.toml` locally):\n"
+                "```toml\n"
+                "[users]\n"
+                'admin = "admin_password"\n'
+                'audrey = "audrey_password"\n'
+                'pd_lead = "pd_team_password"\n'
+                "```\n"
+                "*(Default local fallback: username `admin` / password `taiko`)*"
+            )
 
     st.stop()
 
 
 # -----------------------------------------------------------------------------
-# Sidebar: User Info, Mode Switcher & Slack Status
+# Sidebar: User Info, Bot Connection & Advanced Settings
 # -----------------------------------------------------------------------------
 with st.sidebar:
     u_label = st.session_state.get("user_label", "Admin")
@@ -278,179 +571,252 @@ with st.sidebar:
     with c_u1:
         st.markdown(f"**👤 User:** `{u_label}`")
     with c_u2:
-        if st.button("Log Out", key="sidebar_logout", use_container_width=True, type="primary"):
+        if st.button("Log Out", key="sidebar_logout", use_container_width=True):
             st.session_state["authenticated"] = False
             clear_group_gui_state()
             st.rerun()
 
     st.markdown("---")
-    st.markdown("### 🎛️ Mode & Quick Controls")
-
-    # Mode Selector
-    current_mode = config.mode
-    mode_options = ["PD", "LC"]
-    mode_idx = mode_options.index(current_mode) if current_mode in mode_options else 0
-    selected_mode = st.radio(
-        "Application Mode",
-        options=mode_options,
-        index=mode_idx,
-        help="PD = Performance Director (Group/Song & Individual notes)\nLC = Logistics Coordinator (EOQM/EOYM messages)"
+    # Slack Bot Connection
+    st.markdown(f"##### 🔌 Slack Bot Connection {gb('slack_token')}", unsafe_allow_html=True)
+    cfg_token = st.text_input(
+        "Slack Bot Token",
+        value=get_active_token(),
+        type="password",
+        help="Bot user token starting with xoxb-.",
+        label_visibility="collapsed"
     )
+    col_t_save, col_t_test = st.columns(2)
+    with col_t_save:
+        if st.button("💾 Save Token", key="sb_save_token", use_container_width=True):
+            clean_tok, _ = config.save_token(cfg_token)
+            st.session_state["slack_token"] = clean_tok
+            st.toast("Saved Slack token!", icon="🔌")
+    with col_t_test:
+        if st.button("🧪 Test Auth", key="sb_test_token", use_container_width=True):
+            with st.spinner("Testing connection..."):
+                ok, res = bot_logic.test_slack_token(get_active_token(), config.slack_api_url)
+                if ok:
+                    st.success(f"Connected: @{res.get('user')}")
+                else:
+                    st.error(f"Failed: {res}")
 
-    if selected_mode != config.mode:
-        config.mode = selected_mode
-        # Update config.json
-        cfg = config.load_config()
-        cfg["mode"] = selected_mode
-        config.save_config(cfg)
-        st.session_state["parsed_comments"] = {}
-        st.session_state["full_messages"] = {}
-        st.session_state["selected_recipient_idx"] = 0
-        st.rerun()
+    # Advanced Settings (Collapsed Expander)
+    with st.expander("⚙️ Advanced Settings", expanded=False):
+        st.markdown(f"**Search Keywords** {gb('group_keywords')}", unsafe_allow_html=True)
+        g_terms_in = st.text_input(
+            "Group Column Terms",
+            value=", ".join(config.group_search_list),
+            help="Terms identifying group columns"
+        )
+        i_terms_in = st.text_input(
+            "Individual Column Terms",
+            value=", ".join(config.indiv_search_list),
+            help="Terms identifying individual columns"
+        )
+        e_terms_in = st.text_input(
+            "Excluded Header Terms",
+            value=", ".join(config.exclude_search_list),
+            help="Terms to ignore from group detection (e.g. PDs, ADs, Leadership, Timestamp)"
+        )
+        if st.button("💾 Save Keywords", key="sb_save_keywords", use_container_width=True):
+            up_group = [t.strip() for t in g_terms_in.split(",") if t.strip()]
+            up_indiv = [t.strip() for t in i_terms_in.split(",") if t.strip()]
+            up_exclude = [t.strip() for t in e_terms_in.split(",") if t.strip()]
+            cfg = config.load_config()
+            if "search" not in cfg:
+                cfg["search"] = {}
+            cfg["search"]["group_terms"] = up_group
+            cfg["search"]["indiv_terms"] = up_indiv
+            cfg["search"]["exclude_terms"] = up_exclude
+            cfg["search"].pop("terms", None)
+            config.save_config(cfg)
+            config.group_search_list = up_group
+            config.indiv_search_list = up_indiv
+            config.exclude_search_list = up_exclude
+            config.search_list = up_group + up_indiv
+            st.toast("Keywords saved!", icon="🔍")
 
-    if st.session_state.get("detected_mode"):
-        det_m = st.session_state["detected_mode"]
-        if config.mode == det_m:
-            st.caption(f"⚙️ Matches sheet detection (**{det_m} Mode**)")
-        else:
-            st.caption(f"⚠️ Manually overridden from sheet's detected **{det_m} Mode**")
-
-    if config.mode == "PD":
-        st.info("**PD Mode Active**\n| Parses practice feedback grouped by songs/ensembles and filters individual comments.")
-    else:
-        st.info("**LC Mode Active**\n| Parses personal feedback columns directly mapped to individual member names.")
-
-    st.markdown("---")
-    st.markdown("### 🔌 Slack Bot Connection")
-    active_tok = get_active_token()
-    token_preview = f"...{active_tok[-8:]}" if len(active_tok) > 8 else (
-        "Configured" if active_tok else "Missing"
-    )
-    st.write(f"**Token:** `{token_preview}`")
-    st.write(f"**API URL:** `{config.slack_api_url}`")
-
-    if st.button("🔍 Test Slack Auth", use_container_width=True):
-        with st.spinner("Testing Slack connection..."):
-            ok, res = bot_logic.test_slack_token(active_tok, config.slack_api_url)
-            if ok:
-                st.success(f"Connected to **{res.get('team')}** as bot **@{res.get('user')}**!")
-            else:
-                st.error(f"Connection test failed: {res}")
-
-    st.markdown("---")
-    st.markdown(f"**Members in Name List:** `{len(st.session_state['name_dict'])}`")
-    st.caption("ST SlackBot v2.0 • Streamlit GUI")
+        st.markdown("---")
+        st.markdown(f"**Configuration File** {gb('config_io')}", unsafe_allow_html=True)
+        col_c_imp, col_c_exp = st.columns(2)
+        with col_c_imp:
+            with st.popover("📥 Import", use_container_width=True):
+                uploaded_cfg = st.file_uploader("Upload config.json", type=["json"], key="sb_cfg_upload")
+                if uploaded_cfg is not None:
+                    try:
+                        cfg_data = json.loads(uploaded_cfg.getvalue().decode("utf-8"))
+                        if isinstance(cfg_data, dict):
+                            config.save_config(cfg_data)
+                            st.toast("Imported configuration!", icon="⚙️")
+                            st.rerun()
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+        with col_c_exp:
+            current_cfg_str = json.dumps(config.load_config(), indent=2)
+            st.download_button(
+                "📤 Export",
+                data=current_cfg_str,
+                file_name="config.json",
+                mime="application/json",
+                use_container_width=True,
+                key="sb_cfg_export"
+            )
 
 
 # -----------------------------------------------------------------------------
 # Main Header
 # -----------------------------------------------------------------------------
-col_title, col_badge = st.columns([3, 1])
+col_title, col_ctrls = st.columns([3, 1.2])
 with col_title:
-    st.markdown('<div class="main-title">ST SlackBot v2</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="main-title">{i18n.t("header.title")} {gb("app_header")}</div>', unsafe_allow_html=True)
     u_label = st.session_state.get("user_label", "Admin")
-    st.markdown(f'<div class="sub-title">Session: **@{u_label}** • Active: `{config.mode} Mode`</div>', unsafe_allow_html=True)
+    st.caption(f"Logged in as **@{u_label}**")
 
-with col_badge:
-    mode_badge_html = f'<div style="text-align: right; margin-top: 15px;"><span class="{"badge-pd" if config.mode == "PD" else "badge-lc"}">{config.mode} MODE</span></div>'
-    st.markdown(mode_badge_html, unsafe_allow_html=True)
+with col_ctrls:
+    c_badge, c_guide = st.columns([1, 1.2])
+    with c_badge:
+        mode_badge_html = f'<div style="text-align: right; margin-top: 6px;"><span class="{"badge-pd" if config.mode == "PD" else "badge-lc"}">{config.mode} MODE</span> {gb("mode_badge")}</div>'
+        st.markdown(mode_badge_html, unsafe_allow_html=True)
+    with c_guide:
+        is_guide = st.session_state.get("guide_mode", False)
+        guide_label = "✕ Exit Guide" if is_guide else "🧭 Help Guide"
+        guide_type = "primary" if is_guide else "secondary"
+        if st.button(guide_label, key="main_header_guide_btn", type=guide_type, use_container_width=True, help="Toggle interactive help tooltips over UI elements"):
+            st.session_state["guide_mode"] = not is_guide
+            st.rerun()
+
+# Single dismissible banner when Guide Mode is active
+if st.session_state.get("guide_mode", False):
+    c_gb1, c_gb2 = st.columns([5, 1.5])
+    with c_gb1:
+        st.info("💡 **Interactive Guide Active:** Hover over any purple `?` badge to see helpful explanations.")
+    with c_gb2:
+        with st.popover("📖 All Help Topics", use_container_width=True):
+            st.markdown("###### Help Topics Index")
+            all_exps = i18n.get_all_guide_explanations()
+            q = st.text_input("Filter topics:", placeholder="Search...", key="pop_topic_search")
+            for k, info in all_exps.items():
+                if q and q.lower() not in (k + info.get("title", "") + info.get("description", "")).lower():
+                    continue
+                st.markdown(f"**{info.get('title', k)}**")
+                st.write(info.get("description", ""))
+                if info.get("tip"):
+                    st.caption(f"💡 {info['tip']}")
+                st.markdown("---")
+
 
 # -----------------------------------------------------------------------------
-# Main Navigation Tabs (Streamlined 4-Step Flow)
+# Step-by-Step Workflow Navigation (Single Unified Stepper)
 # -----------------------------------------------------------------------------
-tab_groups_label = "👥 2. Review Groups" if config.mode == "PD" else "📋 2. Review Member Columns"
+if "current_step" not in st.session_state:
+    st.session_state["current_step"] = 1
 
-tab_setup, tab_groups, tab_preview, tab_send = st.tabs([
-    "📂 1. Setup & Spreadsheet",
-    tab_groups_label,
-    "💬 3. Review Comments",
-    "🚀 4. Send Comments"
-])
+step_labels = {
+    1: f"1. {i18n.t('nav.tab_setup')}",
+    2: f"2. {i18n.t('nav.tab_groups_pd') if config.mode == 'PD' else i18n.t('nav.tab_groups_lc')}",
+    3: f"3. {i18n.t('nav.tab_preview')}",
+    4: f"4. {i18n.t('nav.tab_send')}"
+}
+
+def on_step_change():
+    st.session_state["current_step"] = st.session_state["nav_step_control"]
+
+def go_to_step(s: int):
+    st.session_state["current_step"] = s
+    st.rerun()
+
+# Synchronize nav_step_control before the widget is created
+st.session_state["nav_step_control"] = st.session_state["current_step"]
+
+st.segmented_control(
+    "Workflow Navigation",
+    options=[1, 2, 3, 4],
+    format_func=lambda s: step_labels[s],
+    key="nav_step_control",
+    on_change=on_step_change,
+    label_visibility="collapsed"
+)
+
+active_step = st.session_state.get("current_step", 1)
 
 
 # =============================================================================
-# TAB 1: SETUP & SPREADSHEET (Combined Roster, Spreadsheet & Auto Mode Detection)
+# STEP 1: SETUP & SPREADSHEET
 # =============================================================================
-with tab_setup:
-    st.subheader("📂 Step 1: Setup & Spreadsheet Selection")
-    st.caption("Manage member Slack IDs, load your performance feedback spreadsheet, and confirm auto-detected modes.")
-
+if active_step == 1:
     col_roster, col_sheet = st.columns(2)
 
-    # -------------------------------------------------------------------------
-    # Card 1: Member Roster & Directory
-    # -------------------------------------------------------------------------
+    # Card 1: Member Directory
     with col_roster:
-        st.markdown("##### 👥 Member Roster & Slack IDs")
-        source_label = st.session_state.get("name_list_source", config.name_filepath)
-        num_members = len(st.session_state["name_dict"])
-        st.info(f"**{num_members} members loaded** • Source: `{source_label}`")
+        with st.container(border=True):
+            c_rh, c_rt = st.columns([3, 1])
+            with c_rh:
+                num_members = len(st.session_state["name_dict"])
+                st.markdown(f"##### 👥 {i18n.t('setup.roster_heading')} `{num_members} members` {gb('roster_directory')}", unsafe_allow_html=True)
+            with c_rt:
+                with st.popover("⚙️ Tools", use_container_width=True):
+                    st.markdown("###### Directory Tools")
+                    if st.button("🏷️ Fetch from Slack", use_container_width=True, help="Queries Slack API users.list via users:read to populate members & IDs"):
+                        active_tok = get_active_token()
+                        with st.spinner("Fetching members from Slack..."):
+                            ok, res = bot_logic.fetch_slack_users(active_tok, config.slack_api_url)
+                            if not ok:
+                                st.error(res)
+                            else:
+                                existing_id_to_name = {v: k for k, v in st.session_state["name_dict"].items() if v}
+                                new_dict = {}
+                                slack_meta = dict(st.session_state.get("slack_user_meta", {}))
+                                for m in res:
+                                    uid = m["id"]
+                                    assigned_name = existing_id_to_name.get(uid, m["suggested_name"])
+                                    if assigned_name in new_dict and new_dict[assigned_name] != uid:
+                                        assigned_name = m["username"].lower()
+                                    new_dict[assigned_name] = uid
+                                    slack_meta[uid] = f"{m['real_name']} (@{m['username']})" if m['real_name'] else f"@{m['username']}"
 
-        c_rf1, c_rf2, c_rf3 = st.columns(3)
-        with c_rf1:
-            if st.button("🏷️ Fetch Slack IDs", use_container_width=True, help="Queries Slack API users.list via users:read to populate members & IDs"):
-                active_tok = get_active_token()
-                with st.spinner("Fetching members from Slack..."):
-                    ok, res = bot_logic.fetch_slack_users(active_tok, config.slack_api_url)
-                    if not ok:
-                        st.error(res)
-                    else:
-                        existing_id_to_name = {v: k for k, v in st.session_state["name_dict"].items() if v}
-                        new_dict = {}
-                        slack_meta = dict(st.session_state.get("slack_user_meta", {}))
-                        for m in res:
-                            uid = m["id"]
-                            assigned_name = existing_id_to_name.get(uid, m["suggested_name"])
-                            if assigned_name in new_dict and new_dict[assigned_name] != uid:
-                                assigned_name = m["username"].lower()
-                            new_dict[assigned_name] = uid
-                            slack_meta[uid] = f"{m['real_name']} (@{m['username']})" if m['real_name'] else f"@{m['username']}"
+                                st.session_state["name_dict"] = new_dict
+                                st.session_state["slack_user_meta"] = slack_meta
+                                st.session_state["name_list_source"] = "Slack Workspace API (users.list)"
+                                st.toast(f"Fetched {len(res)} members from Slack!", icon="🤖")
+                                st.rerun()
 
-                        st.session_state["name_dict"] = new_dict
-                        st.session_state["slack_user_meta"] = slack_meta
-                        st.session_state["name_list_source"] = "Slack Workspace API (users.list)"
-                        st.toast(f"Fetched {len(res)} members from Slack!", icon="🤖")
+                    uploaded_name_file = st.file_uploader(
+                        "Import JSON",
+                        type=["json"],
+                        key="pop_upload_name_file",
+                        help="Upload name_list.json"
+                    )
+                    if uploaded_name_file is not None:
+                        name_sig = f"{uploaded_name_file.name}_{uploaded_name_file.size}"
+                        if st.session_state.get("last_uploaded_name_sig") != name_sig:
+                            try:
+                                parsed_dict = safe_parse_name_list_json(uploaded_name_file.getvalue())
+                                if parsed_dict:
+                                    st.session_state["name_dict"] = parsed_dict
+                                    st.session_state["name_list_source"] = uploaded_name_file.name
+                                    st.session_state["last_uploaded_name_sig"] = name_sig
+                                    bot_logic.save_name_list(parsed_dict, config.name_filepath)
+                                    st.toast(f"Imported {len(parsed_dict)} members!", icon="📥")
+                                    st.rerun()
+                                else:
+                                    st.error("No valid members found in JSON.")
+                            except Exception as e:
+                                st.error(f"Error parsing JSON: {e}")
+
+                    json_export = json.dumps(st.session_state["name_dict"], indent=2)
+                    st.download_button(
+                        "📥 Export JSON",
+                        data=json_export,
+                        file_name="name_list.json",
+                        mime="application/json",
+                        use_container_width=True
+                    )
+                    if st.button("🔄 Reload from File", use_container_width=True):
+                        refresh_name_list()
                         st.rerun()
 
-        with c_rf2:
-            with st.popover("📁 Import JSON", use_container_width=True):
-                st.markdown("###### Upload Member Roster JSON")
-                uploaded_name_file = st.file_uploader(
-                    "Upload .json file",
-                    type=["json"],
-                    key="pop_upload_name_file",
-                    help="Upload a name_list.json file"
-                )
-                if uploaded_name_file is not None:
-                    name_sig = f"{uploaded_name_file.name}_{uploaded_name_file.size}"
-                    if st.session_state.get("last_uploaded_name_sig") != name_sig:
-                        try:
-                            parsed_dict = safe_parse_name_list_json(uploaded_name_file.getvalue())
-                            if parsed_dict:
-                                st.session_state["name_dict"] = parsed_dict
-                                st.session_state["name_list_source"] = uploaded_name_file.name
-                                st.session_state["last_uploaded_name_sig"] = name_sig
-                                bot_logic.save_name_list(parsed_dict, config.name_filepath)
-                                st.toast(f"Imported {len(parsed_dict)} members!", icon="📥")
-                                st.rerun()
-                            else:
-                                st.error("No valid members found in JSON.")
-                        except Exception as e:
-                            st.error(f"Error parsing JSON: {e}")
-
-        with c_rf3:
-            json_export = json.dumps(st.session_state["name_dict"], indent=2)
-            st.download_button(
-                "📥 Export JSON",
-                data=json_export,
-                file_name="name_list.json",
-                mime="application/json",
-                use_container_width=True,
-                help="Download the online copy of name_list.json"
-            )
-
-        with st.expander("📝 View & Edit Member Names & Slack IDs", expanded=False):
-            st.caption("Double-click any name in **Spreadsheet Name** to match performance form headers:")
+            st.caption("Double-click any cell below to match names or edit Slack IDs:")
             slack_meta_cache = st.session_state.get("slack_user_meta", {})
             name_records = []
             for k, v in st.session_state["name_dict"].items():
@@ -472,276 +838,193 @@ with tab_setup:
 
             edited_df = st.data_editor(
                 df_names,
+                height=340,
                 num_rows="dynamic",
                 use_container_width=True,
                 column_config=col_config,
                 key="setup_roster_editor"
             )
 
-            c_save_r, c_rel_r = st.columns([2, 1])
-            with c_save_r:
-                if st.button("💾 Save Directory Changes", type="secondary", use_container_width=True):
-                    updated_dict = {}
-                    for _, row in edited_df.iterrows():
-                        name_val = str(row.get("Spreadsheet Name", "")).strip().lower() if pd.notna(row.get("Spreadsheet Name")) else ""
-                        id_val = str(row.get("Slack ID", "")).strip() if pd.notna(row.get("Slack ID")) else ""
-                        if name_val:
-                            updated_dict[name_val] = id_val
-                    st.session_state["name_dict"] = updated_dict
-                    bot_logic.save_name_list(updated_dict, config.name_filepath)
-                    st.toast(f"Saved {len(updated_dict)} members!", icon="💾")
-                    st.rerun()
-            with c_rel_r:
-                if st.button("🔄 Reload File", use_container_width=True):
-                    refresh_name_list()
-                    st.rerun()
+            if st.button("💾 Save Directory Changes", type="secondary", use_container_width=True):
+                updated_dict = {}
+                for _, row in edited_df.iterrows():
+                    name_val = str(row.get("Spreadsheet Name", "")).strip().lower() if pd.notna(row.get("Spreadsheet Name")) else ""
+                    id_val = str(row.get("Slack ID", "")).strip() if pd.notna(row.get("Slack ID")) else ""
+                    if name_val:
+                        updated_dict[name_val] = id_val
+                st.session_state["name_dict"] = updated_dict
+                bot_logic.save_name_list(updated_dict, config.name_filepath)
+                st.toast(f"Saved {len(updated_dict)} members!", icon="💾")
+                st.rerun()
 
-    # -------------------------------------------------------------------------
-    # Card 2: Spreadsheet Selection & Auto Mode Detection
-    # -------------------------------------------------------------------------
+    # Card 2: Spreadsheet Selection
     with col_sheet:
-        st.markdown("##### 📁 Spreadsheet (.xlsx)")
-        existing_files = bot_logic.get_available_spreadsheets(config.spreadsheet_folder)
-        sheet_source = None
-        loaded_file_label = ""
+        with st.container(border=True):
+            st.markdown(f"##### 📁 {i18n.t('setup.sheet_heading')} {gb('spreadsheet_selection')}", unsafe_allow_html=True)
+            existing_files = bot_logic.get_available_spreadsheets(config.spreadsheet_folder)
+            sheet_source = None
+            loaded_file_label = ""
 
-        c_src_type = st.radio("Spreadsheet Selection Mode", ["Existing from folder", "Upload new (.xlsx)"], horizontal=True, label_visibility="collapsed")
-        if c_src_type == "Existing from folder":
-            if existing_files:
-                default_idx = existing_files.index(config.form_file) if config.form_file in existing_files else 0
-                selected_file = st.selectbox("Select file", existing_files, index=default_idx, label_visibility="collapsed")
-                if selected_file:
-                    sheet_source = os.path.join(config.spreadsheet_folder, selected_file)
-                    loaded_file_label = selected_file
-                    st.session_state["active_spreadsheet_name"] = selected_file
+            c_src_type = st.radio("Selection Source", ["Select from folder", "Upload new (.xlsx)"], horizontal=True, label_visibility="collapsed")
+            if c_src_type == "Select from folder":
+                if existing_files:
+                    default_idx = existing_files.index(config.form_file) if config.form_file in existing_files else 0
+                    selected_file = st.selectbox("Select file", existing_files, index=default_idx, label_visibility="collapsed")
+                    if selected_file:
+                        sheet_source = os.path.join(config.spreadsheet_folder, selected_file)
+                        loaded_file_label = selected_file
+                        st.session_state["active_spreadsheet_name"] = selected_file
+                else:
+                    st.caption(f"No spreadsheets found in `{config.spreadsheet_folder}/`.")
             else:
-                st.caption(f"No spreadsheets found in `{config.spreadsheet_folder}/`.")
-        else:
-            uploaded_file = st.file_uploader("Upload Excel spreadsheet (.xlsx)", type=["xlsx"], key="setup_uploader_file", label_visibility="collapsed")
-            if uploaded_file is not None:
-                sheet_source = uploaded_file
-                loaded_file_label = uploaded_file.name
-                st.session_state["active_spreadsheet_name"] = uploaded_file.name
-                save_path = os.path.join(config.spreadsheet_folder, uploaded_file.name)
-                os.makedirs(config.spreadsheet_folder, exist_ok=True)
-                with open(save_path, "wb") as f:
-                    f.write(uploaded_file.getbuffer())
+                uploaded_file = st.file_uploader("Upload Excel spreadsheet (.xlsx)", type=["xlsx"], key="setup_uploader_file", label_visibility="collapsed")
+                if uploaded_file is not None:
+                    sheet_source = uploaded_file
+                    loaded_file_label = uploaded_file.name
+                    st.session_state["active_spreadsheet_name"] = uploaded_file.name
+                    save_path = os.path.join(config.spreadsheet_folder, uploaded_file.name)
+                    os.makedirs(config.spreadsheet_folder, exist_ok=True)
+                    with open(save_path, "wb") as f:
+                        f.write(uploaded_file.getbuffer())
 
-        if sheet_source is not None:
-            try:
-                wb, sheet, sheet_names = bot_logic.load_workbook_and_sheet(sheet_source)
-                st.session_state["wb"] = wb
-                st.session_state["sheet"] = sheet
+            if sheet_source is not None:
+                try:
+                    wb, sheet, sheet_names = bot_logic.load_workbook_and_sheet(sheet_source)
+                    st.session_state["wb"] = wb
+                    st.session_state["sheet"] = sheet
 
-                if len(sheet_names) > 1:
-                    selected_sheet_name = st.selectbox("Worksheet", sheet_names, index=sheet_names.index(sheet.title) if sheet.title in sheet_names else 0)
-                    if selected_sheet_name != sheet.title:
-                        sheet = wb[selected_sheet_name]
-                        st.session_state["sheet"] = sheet
+                    if len(sheet_names) > 1:
+                        selected_sheet_name = st.selectbox("Worksheet", sheet_names, index=sheet_names.index(sheet.title) if sheet.title in sheet_names else 0)
+                        if selected_sheet_name != sheet.title:
+                            sheet = wb[selected_sheet_name]
+                            st.session_state["sheet"] = sheet
 
-                headers = bot_logic.get_sheet_headers(sheet)
-                st.session_state["headers"] = headers
+                    headers = bot_logic.get_sheet_headers(sheet)
+                    st.session_state["headers"] = headers
 
-                # Auto-detection
-                all_known = list(st.session_state["name_dict"].keys())
-                detected_mode, detect_reason, _ = bot_logic.detect_spreadsheet_mode(
-                    headers, all_known, config.group_search_list, config.indiv_search_list
-                )
-                st.session_state["detected_mode"] = detected_mode
-                st.session_state["detected_reason"] = detect_reason
+                    # Auto-detection
+                    all_known = list(st.session_state["name_dict"].keys())
+                    detected_mode, detect_reason, _ = bot_logic.detect_spreadsheet_mode(
+                        headers, all_known, config.group_search_list, config.indiv_search_list, config.exclude_search_list
+                    )
+                    st.session_state["detected_mode"] = detected_mode
+                    st.session_state["detected_reason"] = detect_reason
 
-                # When a new spreadsheet is loaded, reset group assignments
-                if st.session_state.get("last_loaded_file") != loaded_file_label:
-                    st.session_state["last_loaded_file"] = loaded_file_label
-                    base_name = os.path.splitext(loaded_file_label)[0]
-                    default_title = f"{base_name}"
-                    st.session_state["message_header_text"] = default_title
-                    st.session_state["input_message_header"] = default_title
-                    clear_group_gui_state()
-                    if config.mode != detected_mode:
-                        config.mode = detected_mode
-                        cfg = config.load_config()
-                        cfg["mode"] = detected_mode
-                        config.save_config(cfg)
-                    if config.mode == "PD":
-                        paired, _, _ = bot_logic.detect_groups_pd(
-                            headers, config.group_search_list, config.indiv_search_list
-                        )
-                        st.session_state["group_configs"] = [
-                            {
-                                "id": f"grp_{i}_{int(time.time()*1000)}",
-                                "group_name": p["group_name"],
-                                "group_col": p["group_col"],
-                                "indiv_name": p["indiv_name"],
-                                "indiv_col": p["indiv_col"],
-                                "members": []
-                            }
-                            for i, p in enumerate(paired)
-                        ]
-                    st.toast(f"Loaded {loaded_file_label} ({detected_mode} Mode)", icon="📄")
-                    st.rerun()
-
-                # Mode & Status Indicator
-                c_det_banner, c_det_toggle = st.columns([3, 1])
-                with c_det_banner:
-                    if config.mode == detected_mode:
-                        st.success(f"🤖 **Auto-detected: {detected_mode} Mode** — {detect_reason}")
-                    else:
-                        st.warning(f"⚠️ **Override Active:** Using **{config.mode} Mode** (Sheet format was detected as {detected_mode})")
-                with c_det_toggle:
-                    other_mode = "LC" if config.mode == "PD" else "PD"
-                    if st.button(f"Switch to {other_mode}", use_container_width=True):
-                        config.mode = other_mode
-                        cfg = config.load_config()
-                        cfg["mode"] = other_mode
-                        config.save_config(cfg)
+                    if st.session_state.get("last_loaded_file") != loaded_file_label:
+                        st.session_state["last_loaded_file"] = loaded_file_label
+                        base_name = os.path.splitext(loaded_file_label)[0]
+                        default_title = f"{base_name}"
+                        st.session_state["message_header_text"] = default_title
+                        st.session_state["input_message_header"] = default_title
                         clear_group_gui_state()
+                        if config.mode != detected_mode:
+                            config.mode = detected_mode
+                            cfg = config.load_config()
+                            cfg["mode"] = detected_mode
+                            config.save_config(cfg)
+                        if config.mode == "PD":
+                            paired, _, _ = bot_logic.detect_groups_pd(
+                                headers, config.group_search_list, config.indiv_search_list, config.exclude_search_list
+                            )
+                            st.session_state["group_configs"] = [
+                                {
+                                    "id": f"grp_{i}_{int(time.time()*1000)}",
+                                    "group_name": p["group_name"],
+                                    "group_col": p["group_col"],
+                                    "indiv_name": p["indiv_name"],
+                                    "indiv_col": p["indiv_col"],
+                                    "members": []
+                                }
+                                for i, p in enumerate(paired)
+                            ]
+                        st.toast(f"Loaded {loaded_file_label} ({detected_mode} Mode)", icon="📄")
                         st.rerun()
 
-                # Message Header Banner
-                current_header = st.session_state.get("message_header_text", "")
-                if not current_header:
-                    current_header = f"Feedback: {os.path.splitext(loaded_file_label)[0]}"
-                    st.session_state["message_header_text"] = current_header
-
-                new_header = st.text_input(
-                    "📝 Message Header Banner",
-                    value=current_header,
-                    key="input_message_header",
-                    help="Appears at the very top of each member's Slack message"
-                )
-                if new_header != st.session_state.get("message_header_text"):
-                    st.session_state["message_header_text"] = new_header
-                    if st.session_state.get("full_messages"):
-                        trigger_parse_comments(sheet)
-                    st.rerun()
-
-                st.caption("Live Header Preview:")
-                p_block = bot_logic.build_header_block(st.session_state.get("message_header_text", ""))
-                if p_block:
-                    st.code(p_block.rstrip(), language="markdown")
-
-                with st.expander("👀 View Spreadsheet Header & First 3 Responses", expanded=False):
-                    rows_data = []
-                    for r in range(1, min(sheet.max_row + 1, 5)):
-                        row_vals = [sheet.cell(row=r, column=c).value for c in range(1, len(headers) + 1)]
-                        rows_data.append(row_vals)
-                    if rows_data:
-                        df = pd.DataFrame(rows_data[1:], columns=rows_data[0])
-                        st.dataframe(df, use_container_width=True)
-
-            except Exception as e:
-                st.error(f"Error loading workbook: {e}")
-        else:
-            st.info("Select or upload an Excel spreadsheet above to begin.")
-
-    # -------------------------------------------------------------------------
-    # Collapsible Advanced / Optional Settings (Slack Token, Config, Keywords)
-    # -------------------------------------------------------------------------
-    st.markdown("---")
-    with st.expander("⚙️ Optional Settings (Slack Bot Token, Config & Keywords)", expanded=False):
-        c_opt1, c_opt2 = st.columns(2)
-        with c_opt1:
-            st.markdown("###### 🔌 Slack Bot Token")
-            cfg_token = st.text_input(
-                "Slack Bot Token (SLACK_BOT_TOKEN)",
-                value=get_active_token(),
-                type="password",
-                help="Bot token starting with xoxb-."
-            )
-            col_t_save, col_t_test = st.columns(2)
-            with col_t_save:
-                if st.button("💾 Save Token", use_container_width=True):
-                    clean_tok, _ = config.save_token(cfg_token)
-                    st.session_state["slack_token"] = clean_tok
-                    st.toast("Saved Slack token!", icon="🔌")
-            with col_t_test:
-                if st.button("🧪 Test Slack Connection", use_container_width=True):
-                    with st.spinner("Testing Slack token..."):
-                        ok, res = bot_logic.test_slack_token(get_active_token(), config.slack_api_url)
-                        if ok:
-                            st.success(f"Connected to **{res.get('team')}** as **@{res.get('user')}**!")
+                    # Mode & Status Indicator
+                    c_det_banner, c_det_toggle = st.columns([3, 1])
+                    with c_det_banner:
+                        if config.mode == detected_mode:
+                            st.info(f"🤖 **Auto-detected:** `{detected_mode} Mode` ({detect_reason})")
                         else:
-                            st.error(f"Test failed: {res}")
+                            st.warning(f"⚠️ **Override Active:** Using **{config.mode} Mode** (detected as `{detected_mode}`)")
+                    with c_det_toggle:
+                        other_mode = "LC" if config.mode == "PD" else "PD"
+                        if st.button(f"Switch to {other_mode}", use_container_width=True):
+                            config.mode = other_mode
+                            cfg = config.load_config()
+                            cfg["mode"] = other_mode
+                            config.save_config(cfg)
+                            clear_group_gui_state()
+                            st.rerun()
 
-        with c_opt2:
-            st.markdown("###### 🔍 PD Keyword Categories & Config File")
-            g_terms_in = st.text_input(
-                "Group Column Terms (comma-separated)",
-                value=", ".join(config.group_search_list),
-                help="Terms identifying group/song feedback columns (e.g. Group, Ensemble, Feedback, Arashi)"
-            )
-            i_terms_in = st.text_input(
-                "Individual Column Terms (comma-separated)",
-                value=", ".join(config.indiv_search_list),
-                help="Terms identifying individual feedback columns (e.g. Individual, Indiv, Solo)"
-            )
-            col_k_save, col_cfg_pop = st.columns(2)
-            with col_k_save:
-                if st.button("💾 Save Keywords", use_container_width=True):
-                    up_group = [t.strip() for t in g_terms_in.split(",") if t.strip()]
-                    up_indiv = [t.strip() for t in i_terms_in.split(",") if t.strip()]
-                    cfg = config.load_config()
-                    if "search" not in cfg:
-                        cfg["search"] = {}
-                    cfg["search"]["group_terms"] = up_group
-                    cfg["search"]["indiv_terms"] = up_indiv
-                    cfg["search"]["terms"] = up_group + up_indiv
-                    config.save_config(cfg)
-                    config.group_search_list = up_group
-                    config.indiv_search_list = up_indiv
-                    config.search_list = up_group + up_indiv
-                    st.toast("Saved group & individual keywords!", icon="🔍")
-            with col_cfg_pop:
-                with st.popover("📄 Import config.json", use_container_width=True):
-                    uploaded_cfg = st.file_uploader("Upload config.json", type=["json"], key="pop_cfg_upload")
-                    if uploaded_cfg is not None:
-                        try:
-                            cfg_data = json.loads(uploaded_cfg.getvalue().decode("utf-8"))
-                            if isinstance(cfg_data, dict):
-                                config.save_config(cfg_data)
-                                st.toast("Imported configuration!", icon="⚙️")
-                                st.rerun()
-                        except Exception as e:
-                            st.error(f"Error: {e}")
+                    # Message Header Banner
+                    current_header = st.session_state.get("message_header_text", "")
+                    if not current_header:
+                        current_header = f"Feedback: {os.path.splitext(loaded_file_label)[0]}"
+                        st.session_state["message_header_text"] = current_header
 
-    # -------------------------------------------------------------------------
-    # Primary Action: Parse Spreadsheet & Proceed
-    # -------------------------------------------------------------------------
-    st.markdown("---")
+                    if "input_message_header" not in st.session_state:
+                        st.session_state["input_message_header"] = current_header
+
+                    st.markdown(f"**📝 Message Header Banner** {gb('message_header')}", unsafe_allow_html=True)
+                    new_header = st.text_input(
+                        "Message Header Banner",
+                        key="input_message_header",
+                        label_visibility="collapsed",
+                        help="Appears at the very top of each member's Slack message"
+                    )
+                    if new_header != st.session_state.get("message_header_text"):
+                        st.session_state["message_header_text"] = new_header
+                        if st.session_state.get("full_messages"):
+                            trigger_parse_comments(sheet)
+                        st.rerun()
+
+                    with st.expander("👀 View Sample Rows", expanded=False):
+                        rows_data = []
+                        for r in range(1, min(sheet.max_row + 1, 5)):
+                            row_vals = [sheet.cell(row=r, column=c).value for c in range(1, len(headers) + 1)]
+                            rows_data.append(row_vals)
+                        if rows_data:
+                            df = pd.DataFrame(rows_data[1:], columns=rows_data[0])
+                            st.dataframe(df, use_container_width=True)
+
+                except Exception as e:
+                    st.error(f"Error loading workbook: {e}")
+            else:
+                st.info("Select or upload an Excel spreadsheet above to begin.")
+
+    # Step 1 Bottom Navigation
+    st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
     if "sheet" in st.session_state:
-        sheet = st.session_state["sheet"]
-        target_step_title = tab_groups_label.split(".", 1)[1].strip() if "." in tab_groups_label else tab_groups_label
-        if st.button(f"⚡ Parse Spreadsheet & Proceed to {target_step_title} ➡️", type="primary", use_container_width=True):
-            trigger_parse_comments(sheet)
-            st.success(f"✅ Spreadsheet parsed! Switch to **{tab_groups_label}** above to review.")
+        target_step_title = "Review Groups" if config.mode == "PD" else "Review Columns"
+        if st.button(f"Continue to Step 2: {target_step_title} ➡️", type="primary", use_container_width=True):
+            trigger_parse_comments(st.session_state["sheet"])
+            go_to_step(2)
+            st.rerun()
     else:
         st.info("👈 Please select or upload a spreadsheet above to begin.")
 
 
 # =============================================================================
-# TAB 2: REVIEW GROUPS & MEMBERS
+# STEP 2: REVIEW GROUPS & MEMBERS
 # =============================================================================
-with tab_groups:
+elif active_step == 2:
     if "sheet" not in st.session_state:
-        st.warning("Please upload or select a spreadsheet in Step 1 (Setup & Spreadsheet) first.")
+        st.warning("Please upload or select a spreadsheet in Step 1 first.")
+        if st.button("⬅️ Go to Step 1: Setup", use_container_width=True):
+            go_to_step(1)
+            st.rerun()
     else:
         sheet = st.session_state["sheet"]
         headers = st.session_state.get("headers", bot_logic.get_sheet_headers(sheet))
         all_known_members = sorted(list(st.session_state["name_dict"].keys()))
 
         if config.mode == "PD":
-            st.subheader("👥 Step 2: Review Groups & Member Assignments")
-            st.markdown(
-                "Configure each group's name, its corresponding group feedback column, "
-                "paired individual feedback column, and assign members to each group."
-            )
+            st.markdown(f"### 👥 Step 2: Review Groups & Member Assignments {gb('groups_overview')}", unsafe_allow_html=True)
+            st.caption("Assign members to each song/ensemble group to ensure everyone receives their feedback.")
 
-            # Ensure defaults if session state group_configs is empty (strictly empty member lists)
             if not st.session_state["group_configs"]:
-                paired, _, _ = bot_logic.detect_groups_pd(
-                    headers, config.group_search_list, config.indiv_search_list
-                )
+                paired, _, _ = bot_logic.detect_groups_pd(headers, config.group_search_list, config.indiv_search_list, config.exclude_search_list)
                 initial_configs = []
                 for i, p in enumerate(paired):
                     gid = f"grp_{i}_{int(time.time()*1000)}"
@@ -751,15 +1034,36 @@ with tab_groups:
                         "group_col": p["group_col"],
                         "indiv_name": p["indiv_name"],
                         "indiv_col": p["indiv_col"],
-                        "members": []  # Strictly empty by default!
+                        "members": []
                     })
                     st.session_state[f"members_{gid}"] = []
                 st.session_state["group_configs"] = initial_configs
 
-            # -------------------------------------------------------------
-            # Callbacks for Group & Member Management Actions
-            # (Ensures all state modifications happen BEFORE widgets instantiate)
-            # -------------------------------------------------------------
+            # Automatically purge any non-performance/organizer feedback headers (e.g. Question/Comments for PDs/ADs)
+            st.session_state["group_configs"] = [
+                g for g in st.session_state["group_configs"]
+                if not bot_logic.is_excluded_group_header(g.get("group_name", ""), exclude_terms=config.exclude_search_list)
+            ]
+
+            def cb_reset_groups():
+                sheet_obj = st.session_state.get("sheet")
+                if not sheet_obj:
+                    return
+                hdrs = st.session_state.get("headers", bot_logic.get_sheet_headers(sheet_obj))
+                clear_group_gui_state()
+                paired, _, _ = bot_logic.detect_groups_pd(hdrs, config.group_search_list, config.indiv_search_list, config.exclude_search_list)
+                st.session_state["group_configs"] = [
+                    {
+                        "id": f"grp_{i}_{int(time.time()*1000)}",
+                        "group_name": p["group_name"],
+                        "group_col": p["group_col"],
+                        "indiv_name": p["indiv_name"],
+                        "indiv_col": p["indiv_col"],
+                        "members": []
+                    }
+                    for i, p in enumerate(paired)
+                ]
+
             def cb_add_new_group(headers_len):
                 new_group_num = len(st.session_state["group_configs"]) + 1
                 first_col = 1 if headers_len > 0 else None
@@ -783,9 +1087,7 @@ with tab_groups:
                     gid = g.get("id")
                     i_col = st.session_state.get(f"i_col_{gid}", g.get("indiv_col"))
                     g_nm = st.session_state.get(f"name_{gid}", g.get("group_name", ""))
-                    detected = bot_logic.auto_detect_members_for_group(
-                        sheet_obj, i_col, all_known, group_name=g_nm
-                    )
+                    detected = bot_logic.auto_detect_members_for_group(sheet_obj, i_col, all_known, group_name=g_nm)
                     g["members"] = detected
                     st.session_state[f"members_{gid}"] = detected
                 st.session_state["has_assigned_names"] = True
@@ -807,9 +1109,7 @@ with tab_groups:
                 i_col = st.session_state.get(f"i_col_{group_id}", grp.get("indiv_col"))
                 g_nm = st.session_state.get(f"name_{group_id}", grp.get("group_name", ""))
                 all_known = sorted(list(st.session_state["name_dict"].keys()))
-                detected = bot_logic.auto_detect_members_for_group(
-                    sheet_obj, i_col, all_known, group_name=g_nm
-                )
+                detected = bot_logic.auto_detect_members_for_group(sheet_obj, i_col, all_known, group_name=g_nm)
                 st.session_state[f"members_{group_id}"] = detected
                 grp["members"] = detected
                 st.session_state["has_assigned_names"] = True
@@ -830,9 +1130,7 @@ with tab_groups:
                 i_col = st.session_state.get(f"i_col_{group_id}", grp.get("indiv_col"))
                 g_nm = st.session_state.get(f"name_{group_id}", grp.get("group_name", ""))
                 all_known = sorted(list(st.session_state["name_dict"].keys()))
-                mentioned = bot_logic.auto_detect_members_for_group(
-                    sheet_obj, i_col, all_known, group_name=g_nm
-                )
+                mentioned = bot_logic.auto_detect_members_for_group(sheet_obj, i_col, all_known, group_name=g_nm)
                 cur = list(st.session_state.get(f"members_{group_id}", grp.get("members", [])))
                 updated = sorted(list(set(cur + mentioned)))
                 st.session_state[f"members_{group_id}"] = updated
@@ -858,20 +1156,6 @@ with tab_groups:
                     if clean and clean not in st.session_state["name_dict"]:
                         st.session_state["name_dict"][clean] = ""
 
-            # Quick Actions Row
-            btn_col1, btn_col2, btn_col3 = st.columns([2, 2, 2])
-            with btn_col1:
-                st.button("➕ Add New Group", on_click=cb_add_new_group, args=(len(headers),), use_container_width=True)
-
-            with btn_col2:
-                st.button("🪄 Auto-Detect All from Comments", on_click=cb_auto_detect_all, use_container_width=True, help="Scans comments & headers to populate members")
-
-            with btn_col3:
-                st.button("🧹 Clear All Groups", on_click=cb_clear_all, use_container_width=True)
-
-            # -------------------------------------------------------------
-            # Summary Metrics, Missing Names Warnings & Overview (Top Level)
-            # -------------------------------------------------------------
             member_group_map = defaultdict(list)
             for g in st.session_state["group_configs"]:
                 gid = g.get("id")
@@ -880,116 +1164,129 @@ with tab_groups:
                     member_group_map[m].append(g.get("group_name", "Group"))
 
             all_assigned_members = sorted(list(member_group_map.keys()))
-            has_any_assigned = len(all_assigned_members) > 0
-            has_assigned_names = st.session_state.get("has_assigned_names", False) or has_any_assigned
+            has_assigned_names = st.session_state.get("has_assigned_names", False) or len(all_assigned_members) > 0
 
-            st.markdown("---")
+            # Action bar: Add, Auto-detect, Clear, Reset, Matrix
+            if st.session_state.get("guide_mode"):
+                st.markdown(f"<div style='margin-bottom:4px; font-size:0.8rem; color:#6366f1;'><strong>Batch Controls:</strong> Add {gb('add_group')} | Auto-Detect {gb('auto_detect_all')} | Clear {gb('clear_group_names')} | Reset {gb('reset_groups')} | Matrix {gb('membership_summary')}</div>", unsafe_allow_html=True)
+
+            c_act1, c_act2, c_act3, c_act4, c_act5 = st.columns([1.5, 2, 1.2, 1.4, 1.4])
+            with c_act1:
+                st.button("➕ Add Group", on_click=cb_add_new_group, args=(len(headers),), use_container_width=True)
+            with c_act2:
+                st.button("🪄 Auto-Detect All", on_click=cb_auto_detect_all, use_container_width=True, help="Scans comments to populate members")
+            with c_act3:
+                st.button("🧹 Clear All", on_click=cb_clear_all, use_container_width=True)
+            with c_act4:
+                st.button("🔄 Reset Groups", on_click=cb_reset_groups, use_container_width=True, help="Reset groups back to spreadsheet auto-detection")
+            with c_act5:
+                with st.popover("📋 Member Matrix", use_container_width=True):
+                    st.markdown(f"###### Member Matrix Overview {gb('membership_summary')}", unsafe_allow_html=True)
+                    if all_assigned_members:
+                        summary_data = []
+                        for m in all_assigned_members:
+                            slack_id = st.session_state["name_dict"].get(m, "⚠️ Missing Slack ID")
+                            groups_str = ", ".join(member_group_map[m])
+                            summary_data.append({
+                                "Member": m,
+                                "Slack ID": slack_id,
+                                "Groups": groups_str,
+                                "Count": len(member_group_map[m])
+                            })
+                        st.dataframe(pd.DataFrame(summary_data), use_container_width=True)
+                    else:
+                        st.info("No members assigned yet.")
+
+            # Summary metrics
+            if st.session_state.get("guide_mode"):
+                st.markdown(f"<div style='font-size:0.8rem; color:#6366f1; margin-bottom:4px;'><strong>Assignment Health Checks:</strong> {gb('unassigned_warnings')}</div>", unsafe_allow_html=True)
+
             c_sm1, c_sm2, c_sm3 = st.columns(3)
             c_sm1.metric("Total Groups", len(st.session_state["group_configs"]))
             c_sm2.metric("Members Assigned", len(all_assigned_members))
             unassigned_count = len([m for m in all_known_members if m not in all_assigned_members]) if has_assigned_names else 0
-            c_sm3.metric("Unassigned Directory Members", unassigned_count if has_assigned_names else "-", delta_color="inverse")
+            c_sm3.metric("Unassigned in Directory", unassigned_count if has_assigned_names else "-", delta_color="inverse")
 
-            # Missing members warnings: Only shown after auto-detection or manual assignment
+            # Missing members warnings
             if not has_assigned_names:
-                st.info("💡 **Groups are currently empty.** Click **🪄 Auto-Detect All from Comments** above to automatically suggest members from sheet feedback, or select members manually in each group card below.")
+                st.info("💡 Groups are currently empty. Click **Auto-Detect All** above to scan feedback, or assign members manually in each card below.")
             else:
-                # 1. Unassigned Directory Members Warning
                 unassigned_dir_members = [m for m in all_known_members if m not in all_assigned_members]
                 if unassigned_dir_members:
-                    st.warning(
-                        f"⚠️ **{len(unassigned_dir_members)} member(s) in `name_list.json` are not assigned to any group:** "
-                        + ", ".join([f"`{m}`" for m in unassigned_dir_members])
-                    )
+                    st.warning(f"⚠️ **{len(unassigned_dir_members)} member(s) unassigned:** {', '.join([f'`{m}`' for m in unassigned_dir_members])}")
 
-                # 2. Total Unassigned Mentions across all groups
                 all_sheet_mentions = set()
                 for g in st.session_state["group_configs"]:
                     indiv_col = st.session_state.get(f"i_col_{g.get('id')}", g.get("indiv_col"))
                     grp_name = st.session_state.get(f"name_{g.get('id')}", g.get("group_name", ""))
                     if indiv_col or grp_name:
-                        m_list = bot_logic.auto_detect_members_for_group(
-                            sheet, indiv_col, all_known_members, group_name=grp_name
-                        )
+                        m_list = bot_logic.auto_detect_members_for_group(sheet, indiv_col, all_known_members, group_name=grp_name)
                         all_sheet_mentions.update(m_list)
 
                 unassigned_sheet_mentions = sorted([m for m in all_sheet_mentions if m not in all_assigned_members])
                 if unassigned_sheet_mentions:
-                    st.error(
-                        f"🚨 **{len(unassigned_sheet_mentions)} member(s) have individual feedback in the spreadsheet but are NOT assigned to any group:** "
-                        + ", ".join([f"`{m}`" for m in unassigned_sheet_mentions])
-                        + " *(They will not receive their feedback unless assigned)*"
-                    )
+                    st.error(f"🚨 **{len(unassigned_sheet_mentions)} member(s) have individual feedback but are NOT assigned to any group:** {', '.join([f'`{m}`' for m in unassigned_sheet_mentions])}")
 
-                # 3. Missing Slack IDs Warning
                 missing_slack = [m for m in all_assigned_members if not st.session_state["name_dict"].get(m)]
                 if missing_slack:
-                    st.error(
-                        f"❌ **{len(missing_slack)} assigned member(s) do not have a Slack User ID in `name_list.json`:** "
-                        + ", ".join([f"`{m}`" for m in missing_slack])
-                        + " *(Add their Slack ID in Step 1 to deliver Slack messages)*"
-                    )
+                    st.error(f"❌ **{len(missing_slack)} assigned member(s) missing Slack User IDs:** {', '.join([f'`{m}`' for m in missing_slack])}")
 
-            # Expandable Membership Table
-            with st.expander("📋 View Membership Summary Table", expanded=False):
-                if all_assigned_members:
-                    summary_data = []
-                    for m in all_assigned_members:
-                        slack_id = st.session_state["name_dict"].get(m, "⚠️ Missing Slack ID")
-                        groups_str = ", ".join(member_group_map[m])
-                        summary_data.append({
-                            "Member Name": m,
-                            "Slack ID": slack_id,
-                            "Assigned Groups": groups_str,
-                            "Group Count": len(member_group_map[m])
-                        })
-                    st.dataframe(pd.DataFrame(summary_data), use_container_width=True)
-                else:
-                    st.info("No members assigned to any groups yet.")
-
-            st.markdown("---")
-            st.markdown("### 🎛️ Group Configurations & Member Assignment")
-
-            # Column option mapping for dropdowns
+            # Column option mapping
             col_options = {idx + 1: f"Col {idx + 1}: {h}" for idx, h in enumerate(headers) if h}
             col_options_with_none = {None: "(None)"}
             col_options_with_none.update(col_options)
 
-            # Render Group Cards
+            # Group Cards
             for idx, group_item in enumerate(st.session_state["group_configs"]):
-                # Ensure group has stable unique id
                 if "id" not in group_item:
                     group_item["id"] = f"grp_{idx}_{int(time.time()*1000)}"
                 group_id = group_item["id"]
                 member_key = f"members_{group_id}"
 
-                # Ensure session state has member list initialized
                 if member_key not in st.session_state:
                     st.session_state[member_key] = list(group_item.get("members", []))
 
-                with st.container():
-                    st.markdown(f'<div class="group-card">', unsafe_allow_html=True)
-                    
+                current_m = list(st.session_state.get(member_key, group_item.get("members", [])))
+                g_display_name = group_item.get("group_name", f"Group {idx + 1}")
+
+                with st.container(border=True):
+                    # Distinct Group Banner Header
+                    member_count_str = f"👥 <strong>{len(current_m)}</strong> member{'s' if len(current_m) != 1 else ''} assigned"
+                    guide_part = f" {gb('group_card')}" if gb('group_card') else ""
+                    escaped_name = html.escape(str(g_display_name))
+                    header_html = (
+                        f'<div class="group-card-header">'
+                        f'<div style="display: flex; align-items: center; gap: 8px;">'
+                        f'<span class="group-badge-num">GROUP {idx + 1}</span>'
+                        f'<span style="font-weight: 700; font-size: 1.05rem; color: #f8fafc;">{escaped_name}</span>'
+                        f'{guide_part}'
+                        f'</div>'
+                        f'<div class="group-member-count">{member_count_str}</div>'
+                        f'</div>'
+                    )
+                    st.markdown(header_html, unsafe_allow_html=True)
+
                     c_title, c_del = st.columns([5, 1])
                     with c_title:
                         group_item["group_name"] = st.text_input(
                             f"Group {idx + 1} Name",
                             value=group_item.get("group_name", f"Group {idx + 1}"),
-                            key=f"name_{group_id}"
+                            key=f"name_{group_id}",
+                            label_visibility="collapsed",
+                            help="Rename this group or ensemble"
                         )
                     with c_del:
-                        st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
                         st.button(
-                            "🗑️ Remove",
+                            "🗑️ Remove Group",
                             key=f"del_group_{group_id}",
                             on_click=cb_remove_group,
                             args=(group_id,),
-                            help="Remove this group card"
+                            use_container_width=True
                         )
 
                     c_g1, c_g2 = st.columns(2)
                     with c_g1:
-                        # Select Group Feedback Column
+                        st.markdown(f"**Group Feedback Column** {gb('group_col_select')}", unsafe_allow_html=True)
                         current_g_col = group_item.get("group_col")
                         g_keys = list(col_options_with_none.keys())
                         g_idx = g_keys.index(current_g_col) if current_g_col in g_keys else 0
@@ -998,50 +1295,36 @@ with tab_groups:
                             options=g_keys,
                             format_func=lambda x: col_options_with_none.get(x, f"Col {x}"),
                             index=g_idx,
-                            key=f"g_col_{group_id}"
+                            key=f"g_col_{group_id}",
+                            label_visibility="collapsed"
                         )
                         group_item["group_col"] = selected_g_col
 
                     with c_g2:
-                        # Select Individual Feedback Column
+                        st.markdown(f"**Individual Feedback Column** {gb('indiv_col_select')}", unsafe_allow_html=True)
                         current_i_col = group_item.get("indiv_col")
                         i_keys = list(col_options_with_none.keys())
                         i_idx = i_keys.index(current_i_col) if current_i_col in i_keys else 0
                         selected_i_col = st.selectbox(
-                            f"Individual Feedback Column (filtered by member name)",
+                            f"Individual Feedback Column",
                             options=i_keys,
                             format_func=lambda x: col_options_with_none.get(x, str(x)),
                             index=i_idx,
-                            key=f"i_col_{group_id}"
+                            key=f"i_col_{group_id}",
+                            label_visibility="collapsed"
                         )
                         group_item["indiv_col"] = selected_i_col
                         group_item["indiv_name"] = headers[selected_i_col - 1] if selected_i_col else None
 
-                    # Members Multi-select with auto-sync and accept_new_options
-                    current_m = list(st.session_state.get(member_key, group_item.get("members", [])))
                     all_opts = sorted(list(set(all_known_members + current_m)))
 
                     c_m_hdr, c_m_det, c_m_clr = st.columns([4, 1.2, 1])
                     with c_m_hdr:
-                        st.markdown(f"**Assigned Members ({len(current_m)}):**")
+                        st.markdown(f"<div style='font-size:0.88rem; font-weight:600; margin-top:4px;'>Assigned Members ({len(current_m)}) {gb('member_multiselect')}</div>", unsafe_allow_html=True)
                     with c_m_det:
-                        st.button(
-                            "🪄 Detect",
-                            key=f"btn_detect_{group_id}",
-                            on_click=cb_detect_group,
-                            args=(group_id,),
-                            use_container_width=True,
-                            help="Auto-detect members from comments & header for this group"
-                        )
+                        st.button("🪄 Detect", key=f"btn_detect_{group_id}", on_click=cb_detect_group, args=(group_id,), use_container_width=True, help="Auto-detect members from comments for this group")
                     with c_m_clr:
-                        st.button(
-                            "🧹 Clear",
-                            key=f"btn_clr_{group_id}",
-                            on_click=cb_clear_group,
-                            args=(group_id,),
-                            use_container_width=True,
-                            help="Clear members for this group"
-                        )
+                        st.button("🧹 Clear", key=f"btn_clr_{group_id}", on_click=cb_clear_group, args=(group_id,), use_container_width=True)
 
                     st.multiselect(
                         f"Members in {group_item['group_name']}",
@@ -1050,12 +1333,11 @@ with tab_groups:
                         on_change=cb_on_members_change,
                         args=(group_id,),
                         accept_new_options=True,
-                        placeholder="Search/select member names or type a new name and press Enter...",
+                        placeholder="Search/select members or type a new name and press Enter...",
                         label_visibility="collapsed"
                     )
                     group_item["members"] = st.session_state.get(member_key, [])
 
-                    # Warning for names mentioned in comments/header but not assigned to this group (only if detection/assignment ran)
                     if has_assigned_names and (selected_i_col or group_item.get("group_name")):
                         mentioned_for_group = bot_logic.auto_detect_members_for_group(
                             sheet, selected_i_col, all_known_members, group_name=group_item.get("group_name", "")
@@ -1065,28 +1347,37 @@ with tab_groups:
                             c_w_txt, c_w_btn = st.columns([4, 1.4])
                             with c_w_txt:
                                 names_str = ", ".join([f"`{m}`" for m in missing_from_group])
-                                st.warning(f"⚠️ **{len(missing_from_group)} name(s) mentioned in feedback are missing from this group:** {names_str}")
+                                st.warning(f"⚠️ Mentioned in feedback but missing: {names_str}")
                             with c_w_btn:
-                                st.markdown("<div style='height: 8px;'></div>", unsafe_allow_html=True)
                                 st.button(
                                     f"➕ Add Missing ({len(missing_from_group)})",
                                     key=f"add_miss_{group_id}",
                                     on_click=cb_add_missing,
                                     args=(group_id,),
-                                    help="Add all missing mentioned names to this group",
                                     use_container_width=True
                                 )
 
-                    st.markdown('</div>', unsafe_allow_html=True)
+                st.markdown("<div style='height: 8px;'></div>", unsafe_allow_html=True)
 
-            st.markdown("---")
-            if st.button("💬 Generate Comments & Proceed to Preview ➡️", key="btn_gen_bottom", type="primary", use_container_width=True):
-                trigger_parse_comments(sheet)
-                st.success(f"✅ Parsed feedback for {len(st.session_state['full_messages'])} members! Switch to **💬 3. Review Comments** above to inspect.")
+            # Step 2 Bottom Navigation
+            st.markdown("<div style='height: 16px;'></div>", unsafe_allow_html=True)
+            if st.session_state.get("guide_mode"):
+                st.markdown(f"<div style='font-size:0.82rem; color:#6366f1; margin-bottom:4px;'>Generate Feedback Action: {gb('generate_comments_btn')}</div>", unsafe_allow_html=True)
+
+            c_back, c_next = st.columns([1, 2])
+            with c_back:
+                if st.button("⬅️ Back to Step 1: Setup", use_container_width=True):
+                    go_to_step(1)
+                    st.rerun()
+            with c_next:
+                if st.button("Continue to Step 3: Review Comments ➡️", type="primary", use_container_width=True):
+                    trigger_parse_comments(sheet)
+                    go_to_step(3)
+                    st.rerun()
 
         elif config.mode == "LC":
-            st.subheader("📋 Step 2: Review Member Columns (LC Mode)")
-            st.markdown("In LC mode, columns in the spreadsheet are mapped directly to member names.")
+            st.markdown(f"### 📋 Step 2: Review Member Columns (LC Mode) {gb('lc_overview')}", unsafe_allow_html=True)
+            st.caption("In LC mode, columns in the spreadsheet are mapped directly to member names.")
 
             matched_columns = []
             for col_idx, h in enumerate(headers, 1):
@@ -1097,136 +1388,133 @@ with tab_groups:
                 st.success(f"Found {len(matched_columns)} columns matching member names.")
                 st.dataframe(pd.DataFrame(matched_columns), use_container_width=True)
 
-                # Check for directory members without a column in the sheet
                 matched_members_set = {col["Matched Member"] for col in matched_columns}
                 unmatched_lc = [m for m in all_known_members if m not in matched_members_set]
                 if unmatched_lc:
-                    st.warning(
-                        f"⚠️ **{len(unmatched_lc)} member(s) in `name_list.json` do not have a feedback column in this spreadsheet:** "
-                        + ", ".join([f"`{m}`" for m in unmatched_lc])
-                    )
+                    st.warning(f"⚠️ **{len(unmatched_lc)} member(s) in `name_list.json` without a feedback column:** {', '.join([f'`{m}`' for m in unmatched_lc])}")
             else:
                 st.warning("No columns in this spreadsheet directly match member names in name_list.json.")
 
-            if st.button("💬 Generate LC Comments & Proceed to Preview ➡️", type="primary", use_container_width=True):
-                trigger_parse_comments(sheet)
-                st.success(f"✅ Parsed LC feedback for {len(st.session_state['full_messages'])} members! Switch to **💬 3. Review Comments** above to inspect.")
+            st.markdown("<div style='height: 16px;'></div>", unsafe_allow_html=True)
+            if st.session_state.get("guide_mode"):
+                st.markdown(f"<div style='font-size:0.82rem; color:#6366f1; margin-bottom:4px;'>Generate Feedback Action: {gb('generate_comments_btn')}</div>", unsafe_allow_html=True)
+
+            c_back, c_next = st.columns([1, 2])
+            with c_back:
+                if st.button("⬅️ Back to Step 1: Setup", use_container_width=True):
+                    go_to_step(1)
+                    st.rerun()
+            with c_next:
+                if st.button("Continue to Step 3: Review Comments ➡️", type="primary", use_container_width=True):
+                    trigger_parse_comments(sheet)
+                    go_to_step(3)
+                    st.rerun()
 
 
 # =============================================================================
-# TAB 3: PREVIEW SAMPLE COMMENTS
+# STEP 3: REVIEW SAMPLE COMMENTS
 # =============================================================================
-with tab_preview:
-    st.subheader("💬 Step 3: Review Sample Comments")
-    st.markdown("Review the exact message formatted for each member before dispatching.")
+elif active_step == 3:
+    st.markdown(f"### 💬 Step 3: Review Sample Comments {gb('comments_overview')}", unsafe_allow_html=True)
+    st.caption("Inspect the exact formatted Slack messages generated for each member before sending.")
 
-    # Automatically parse if not already parsed or if parsed under a different mode
     mode_changed = st.session_state.get("last_parsed_mode") != config.mode
     if (not st.session_state.get("full_messages") or mode_changed) and "sheet" in st.session_state:
         trigger_parse_comments(st.session_state["sheet"])
 
     full_msgs = st.session_state.get("full_messages", {})
-
     if not full_msgs:
-        st.warning("No comments generated yet. Please ensure groups or columns are configured in Step 2 and click 'Generate Comments'.")
+        st.warning("No comments generated yet. Please configure groups in Step 2 first.")
+        if st.button("⬅️ Go to Step 2", use_container_width=True):
+            go_to_step(2)
+            st.rerun()
     else:
         recipients = sorted(list(full_msgs.keys()))
-
-        # Top Metric Cards
-        col_m1, col_m2, col_m3, col_m4 = st.columns(4)
         total_recipients = len(recipients)
         missing_ids = [r for r in recipients if not st.session_state["name_dict"].get(r)]
-        avg_len = sum(len(full_msgs[r]) for r in recipients) // max(total_recipients, 1)
 
-        col_m1.metric("Total Recipients", total_recipients)
-        col_m2.metric("Slack IDs Configured", f"{total_recipients - len(missing_ids)} / {total_recipients}")
-        col_m3.metric("Missing Slack IDs", len(missing_ids), delta_color="inverse")
-        col_m4.metric("Avg Message Length", f"{avg_len} chars")
+        # Compact metric row
+        if st.session_state.get("guide_mode"):
+            st.markdown(f"<div style='font-size:0.8rem; color:#6366f1; margin-bottom:4px;'>Recipient Coverage Metrics: {gb('recipient_metrics')}</div>", unsafe_allow_html=True)
+
+        c_m1, c_m2, c_m3 = st.columns(3)
+        c_m1.metric("Total Recipients", total_recipients)
+        c_m2.metric("Slack IDs Configured", f"{total_recipients - len(missing_ids)} / {total_recipients}")
+        c_m3.metric("Missing Slack IDs", len(missing_ids), delta_color="inverse")
 
         if missing_ids:
-            st.warning(f"⚠️ The following {len(missing_ids)} members have comments but no Slack ID in name_list.json: {', '.join(missing_ids)}. You can add their Slack IDs in Step 1 (Setup & Spreadsheet).")
+            st.warning(f"⚠️ {len(missing_ids)} member(s) have feedback but no Slack ID in name_list.json: {', '.join(missing_ids)}.")
 
-        st.markdown("---")
-
-        # Interactive Sample Selector
         col_sel, col_rand = st.columns([3, 1])
         with col_sel:
+            st.markdown(f"**Select Member to Preview** {gb('recipient_selector')}", unsafe_allow_html=True)
             selected_person = st.selectbox(
                 "Select Member to Preview",
                 options=recipients,
-                index=st.session_state["selected_recipient_idx"] if st.session_state["selected_recipient_idx"] < len(recipients) else 0
+                index=st.session_state["selected_recipient_idx"] if st.session_state["selected_recipient_idx"] < len(recipients) else 0,
+                label_visibility="collapsed"
             )
-            # update index in state
             st.session_state["selected_recipient_idx"] = recipients.index(selected_person)
-
         with col_rand:
             st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
-            if st.button("🎲 View Random Sample", use_container_width=True):
+            if st.button("🎲 Random Sample", use_container_width=True):
                 rand_idx = random.randint(0, len(recipients) - 1)
                 st.session_state["selected_recipient_idx"] = rand_idx
                 st.rerun()
 
-        # Recipient Info Banner
         slack_id = st.session_state["name_dict"].get(selected_person)
-        st.markdown(
-            f"**Recipient:** `{selected_person}` | "
-            f"**Slack ID:** `{'✅ ' + slack_id if slack_id else '❌ Missing (cannot deliver)'}` | "
-            f"**Message Length:** `{len(full_msgs[selected_person])}` characters"
-        )
+        msg_text = full_msgs[selected_person]
 
-        col_view1, col_view2 = st.columns([3, 2])
-
-        with col_view1:
-            c_pv_head, c_pv_theme = st.columns([3, 1])
-            with c_pv_head:
-                st.markdown("##### 📱 Slack Direct Message Preview")
-            with c_pv_theme:
-                preview_theme = st.selectbox("Theme", ["dark", "light"], key="slack_theme_sel", label_visibility="collapsed")
-            msg_text = full_msgs[selected_person]
-            slack_html = bot_logic.render_slack_dm_html(
-                "ST SlackBot", selected_person, slack_id, msg_text, theme=preview_theme
-            )
+        # Tabbed preview: Clean Slack DM vs Raw Markdown
+        tab_dm, tab_raw = st.tabs(["📱 Slack DM Preview", "📝 Raw Payload"])
+        with tab_dm:
+            st.markdown(f"##### 📱 Simulated Slack DM {gb('slack_dm_preview')}", unsafe_allow_html=True)
+            slack_html = bot_logic.render_slack_dm_html("ST SlackBot", selected_person, slack_id, msg_text, theme="dark")
             st.markdown(slack_html, unsafe_allow_html=True)
+        with tab_raw:
+            st.markdown(f"##### 📝 Raw API Payload {gb('raw_markdown')}", unsafe_allow_html=True)
+            st.text_area("Payload", value=msg_text, height=350, disabled=True, label_visibility="collapsed")
 
-        with col_view2:
-            st.markdown("##### 📝 Raw Text (Slack Markdown Payload)")
-            st.text_area(
-                "Raw API Payload",
-                value=msg_text,
-                height=350,
-                disabled=True,
-                label_visibility="collapsed"
-            )
-
-        st.markdown("---")
-
-        # Full Audit Expander
-        with st.expander(f"📋 Audit All {len(recipients)} Recipients at Once", expanded=False):
+        with st.expander(f"📋 Audit All {len(recipients)} Recipients", expanded=False):
+            st.markdown(f"**Batch Audit Verification** {gb('audit_all')}", unsafe_allow_html=True)
             search_query = st.text_input("Filter members:", placeholder="Type to filter...")
             filtered_recipients = [r for r in recipients if search_query.lower() in r.lower()] if search_query else recipients
             for r in filtered_recipients:
                 r_slack = st.session_state["name_dict"].get(r, "Missing ID")
                 st.markdown(f"**@{r}** (`{r_slack}`)")
-                st.text_area(f"msg_{r}", value=full_msgs[r], height=120, disabled=True, label_visibility="collapsed")
+                st.text_area(f"msg_{r}", value=full_msgs[r], height=100, disabled=True, label_visibility="collapsed")
+
+        # Step 3 Bottom Navigation
+        st.markdown("<div style='height: 16px;'></div>", unsafe_allow_html=True)
+        c_back, c_next = st.columns([1, 2])
+        with c_back:
+            if st.button("⬅️ Back to Step 2: Groups", use_container_width=True):
+                go_to_step(2)
+                st.rerun()
+        with c_next:
+            if st.button("Continue to Step 4: Send Messages ➡️", type="primary", use_container_width=True):
+                go_to_step(4)
+                st.rerun()
 
 
 # =============================================================================
-# TAB 4: SEND COMMENTS TO SLACK
+# STEP 4: SEND COMMENTS TO SLACK
 # =============================================================================
-with tab_send:
-    st.subheader("🚀 Step 4: Send Comments to Slack")
-    st.markdown("Send verified personal feedback directly to members via the Slack Bot.")
+elif active_step == 4:
+    st.markdown(f"### 🚀 Step 4: Send Comments to Slack {gb('send_overview')}", unsafe_allow_html=True)
+    st.caption("Verify the recipient checklist and dispatch feedback messages directly to members.")
 
     full_msgs = st.session_state.get("full_messages", {})
     if not full_msgs:
-        st.warning("No comments ready to send. Please configure groups in Step 2 and preview in Step 3.")
+        st.warning("No comments ready to send. Please configure groups in Step 2 first.")
+        if st.button("⬅️ Go to Step 2", use_container_width=True):
+            go_to_step(2)
+            st.rerun()
     else:
         recipients = sorted(list(full_msgs.keys()))
 
-        # Recipient Selection Checklist
-        st.markdown("##### 1. Select Recipients to Include")
-
-        # Table with checkboxes
+        # 1. Recipient Checklist
+        st.markdown(f"##### 1. Recipient Checklist {gb('recipient_checklist')}", unsafe_allow_html=True)
         select_all = st.checkbox("Select All Recipients", value=True)
 
         recipient_status = []
@@ -1245,10 +1533,10 @@ with tab_send:
         edited_recipients = st.data_editor(
             df_recipients,
             column_config={
-                "Send": st.column_config.CheckboxColumn("Include?", default=True),
+                "Send": st.column_config.CheckboxColumn("Send?", default=True),
                 "Member": st.column_config.TextColumn("Member", disabled=True),
                 "Slack ID": st.column_config.TextColumn("Slack User ID", disabled=True),
-                "Status": st.column_config.TextColumn("Readiness", disabled=True),
+                "Status": st.column_config.TextColumn("Status", disabled=True),
                 "Char Count": st.column_config.NumberColumn("Length", disabled=True)
             },
             hide_index=True,
@@ -1257,59 +1545,48 @@ with tab_send:
 
         selected_rows = edited_recipients[edited_recipients["Send"] == True]
         confirmed_recipients = selected_rows["Member"].tolist()
+        st.caption(f"**{len(confirmed_recipients)}** of **{len(recipients)}** recipients selected for delivery.")
 
-        st.markdown(f"**Recipients selected for dispatch:** `{len(confirmed_recipients)}` of `{len(recipients)}`")
-
-        # Safety Check / Test Send
+        # 2. Test Message
         st.markdown("---")
-        st.markdown("##### 2. Optional: Send Test Message First")
-        st.caption("Send a sample feedback payload directly to **your own Slack ID** or a test channel before broadcasting to everyone.")
+        with st.expander("🧪 Optional: Send a Test Message First", expanded=False):
+            st.markdown(f"**Deliver Test DM** {gb('test_send')}", unsafe_allow_html=True)
+            st.caption("Deliver a sample message to your own Slack ID or test channel to verify formatting.")
+            with st.form("test_send_form"):
+                t_col_user, t_col_target, t_col_btn = st.columns([2, 3, 2])
+                with t_col_user:
+                    sample_target = st.selectbox("Sample Payload:", options=recipients, index=0)
+                with t_col_target:
+                    test_slack_id = st.text_input("Your Slack ID or Channel ID:", value=st.session_state.get("last_test_slack_id", ""), placeholder="e.g. U0XXXXXXXXX")
+                with t_col_btn:
+                    st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
+                    send_test_btn = st.form_submit_button("Send Test DM", type="secondary", use_container_width=True)
 
-        with st.form("test_send_form"):
-            t_col_user, t_col_target, t_col_btn = st.columns([2, 3, 2])
-            with t_col_user:
-                sample_target = st.selectbox(
-                    "Sample Feedback Payload:",
-                    options=recipients,
-                    index=0,
-                    help="The generated feedback for this member will be sent as the test payload."
-                )
-            with t_col_target:
-                test_slack_id = st.text_input(
-                    "Your Test Slack User ID or Channel ID:",
-                    value=st.session_state.get("last_test_slack_id", ""),
-                    placeholder="e.g. U0XXXXXXXXX (your Slack ID)",
-                    help="Enter YOUR Slack User ID so the test message is only delivered to you."
-                )
-            with t_col_btn:
-                st.markdown("<div style='height: 28px;'></div>", unsafe_allow_html=True)
-                send_test_btn = st.form_submit_button("🧪 Send Test Message", type="secondary", use_container_width=True)
+                if send_test_btn:
+                    clean_target = test_slack_id.strip()
+                    if not clean_target:
+                        st.error("Please enter a Slack User ID or test channel ID.")
+                    else:
+                        st.session_state["last_test_slack_id"] = clean_target
+                        sample_msg = full_msgs[sample_target]
+                        with st.spinner(f"Sending test for @{sample_target}..."):
+                            active_tok = get_active_token()
+                            ok, res = bot_logic.send_slack_message(active_tok, config.slack_api_url, clean_target, sample_msg)
+                            if ok:
+                                st.success(f"✅ Test message delivered to **`{clean_target}`**!")
+                            else:
+                                st.error(f"Failed: {res}")
 
-            if send_test_btn:
-                clean_target = test_slack_id.strip()
-                if not clean_target:
-                    st.error("Please enter your Slack User ID or test channel ID to receive the test message.")
-                else:
-                    st.session_state["last_test_slack_id"] = clean_target
-                    sample_msg = full_msgs[sample_target]
-                    with st.spinner(f"Sending sample feedback for @{sample_target} to {clean_target}..."):
-                        active_tok = get_active_token()
-                        ok, res = bot_logic.send_slack_message(
-                            active_tok, config.slack_api_url, clean_target, sample_msg
-                        )
-                        if ok:
-                            st.success(f"✅ Test message (sample for **@{sample_target}**) was delivered exclusively to **`{clean_target}`**! (Slack ts: `{res}`)")
-                        else:
-                            st.error(f"Failed to send test message: {res}")
-
-        # Bulk Send Section
+        # 3. Final Broadcast
         st.markdown("---")
-        st.markdown("##### 3. Broadcast Feedback Messages")
-
+        st.markdown(f"##### 2. Final Dispatch {gb('broadcast_confirmation')}", unsafe_allow_html=True)
         confirm_checkbox = st.checkbox(
-            f"I have reviewed the sample comments and confirm sending to all {len(confirmed_recipients)} selected members.",
+            f"I confirm sending messages to all {len(confirmed_recipients)} selected members.",
             value=False
         )
+
+        if st.session_state.get("guide_mode"):
+            st.markdown(f"<div style='font-size:0.82rem; color:#6366f1; margin-bottom:4px;'>Final Dispatch Action: {gb('broadcast_button')}</div>", unsafe_allow_html=True)
 
         if st.button(
             f"🚀 Send Slack Messages to {len(confirmed_recipients)} Members",
@@ -1337,10 +1614,7 @@ with tab_send:
                         fail_count += 1
                         continue
 
-                    ok, res = bot_logic.send_slack_message(
-                        active_tok, config.slack_api_url, slack_id, msg_body
-                    )
-
+                    ok, res = bot_logic.send_slack_message(active_tok, config.slack_api_url, slack_id, msg_body)
                     if ok:
                         st.write(f"✅ **@{person}** (`{slack_id}`): Delivered")
                         success_count += 1
@@ -1354,4 +1628,10 @@ with tab_send:
             if success_count > 0 and fail_count == 0:
                 st.success(f"🎉 Successfully delivered feedback to all {success_count} members!")
             else:
-                st.warning(f"Completed with {success_count} successes and {fail_count} failures. See log above.")
+                st.warning(f"Completed: {success_count} succeeded, {fail_count} failed.")
+
+        # Step 4 Bottom Navigation
+        st.markdown("<div style='height: 16px;'></div>", unsafe_allow_html=True)
+        if st.button("⬅️ Back to Step 3: Review Comments", use_container_width=True):
+            go_to_step(3)
+            st.rerun()
