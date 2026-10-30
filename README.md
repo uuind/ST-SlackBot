@@ -11,6 +11,7 @@
    SLACK_BOT_TOKEN = "xoxb-xxxxxxxxxxxx"
    ```
    *(Or alternatively via `token.env` / environment variables)*
+   > 📖 Need help setting up a Slack Bot? Follow the step-by-step [Slack Bot Workspace Setup Guide](docs/slack_bot_setup.md).
 2. **Member Slack ID mapping** in `name_list.json`:
    ```json
    {
@@ -62,7 +63,7 @@ flowchart LR
 
 1. **📂 Step 1: Setup & Spreadsheet**:
    - **Member Roster (`name_list.json`)**: Click **"🏷️ Fetch Slack IDs (`users:read`)"** to pull active workspace members, **"📁 Import JSON"** to upload an existing directory, or **"📥 Export JSON"** to download the online copy. Expand **"View & Edit Member Names"** anytime to adjust spreadsheet names.
-   - **Spreadsheet & Auto Mode Detection**: Select or upload an `.xlsx` form. ST-SlackBot automatically detects whether it's in **PD Mode** (performance/group songs) or **LC Mode** (committee feedback columns) and lets you customize the **Message Header Banner** at the top of each DM.
+   - **Spreadsheet & Auto Mode Detection**: Select or upload an `.xlsx` form. ST-SlackBot automatically detects whether it's in **PD Mode** (PP feedback) or **LC Mode** (EOYM/EOQM personal feedback) and lets you customize the **Message Header Banner** at the top of each DM.
    - **Optional Settings**: Collapsible menu for Slack bot token test/save, dedicated **Group** and **Individual** column search keywords, and `config.json` import/export.
    - Click **"⚡ Parse Spreadsheet & Proceed to Review Groups ➡️"** to advance.
 

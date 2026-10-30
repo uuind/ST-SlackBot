@@ -11,17 +11,17 @@
   },
   "mode_badge": {
     "title": "Active Bot Mode",
-    "description": "Indicates whether the dispatcher is operating in PD Mode (Performance Director: songs & individual feedback) or LC Mode (Leadership Committee: individual columns).",
+    "description": "Indicates whether the dispatcher is operating in PD Mode (form split by songs & group/individual feedback) or LC Mode (form split by individual columns).",
     "tip": "ST-SlackBot automatically detects the mode when you load a spreadsheet in Step 1, but you can override it if necessary."
   },
   "roster_directory": {
     "title": "Member Roster & Slack IDs",
-    "description": "Maintains the directory connecting spreadsheet names (e.g. 'audrey', 'brian') to their unique Slack User IDs (e.g. 'U0123456789'). Feedback cannot be dispatched without a valid Slack ID.",
+    "description": "Maintains the directory connecting spreadsheet names (e.g. 'dylan') to their unique Slack User IDs (e.g. 'U0123456789'). Feedback cannot be dispatched without a valid Slack ID.",
     "tip": "All names are stored in lowercase for reliable case-insensitive matching."
   },
   "roster_fetch": {
-    "title": "Fetch Members from Slack (users:read)",
-    "description": "Connects to the Slack API (users.list) using your bot token to automatically fetch all active, human workspace members and their Slack IDs.",
+    "title": "Fetch Member IDs from Slack (users:read)",
+    "description": "Connects to the Slack API (users.list) using your bot token to automatically fetch all workspace members and their Slack IDs.",
     "tip": "Requires the 'users:read' OAuth scope on your bot token. After fetching, you only need to adjust the spreadsheet name column to match your form."
   },
   "roster_import": {
@@ -31,22 +31,22 @@
   },
   "roster_export": {
     "title": "Export Roster JSON",
-    "description": "Downloads the current in-memory roster as a clean 'name_list.json' file so you can back it up or use it in CLI mode.",
-    "tip": "Always download a backup after making significant name adjustments or fetching a new cohort."
+    "description": "Downloads the current in-memory roster as a clean 'name_list.json' file so you can reupload it later.",
+    "tip": "Always download a backup after making adjustments or fetching a new cohort."
   },
   "roster_editor": {
     "title": "Interactive Member Directory Table",
     "description": "An editable grid allowing you to rename spreadsheet aliases, add new members, paste Slack IDs, or delete members.",
-    "tip": "Double-click any cell in the 'Spreadsheet Name' column to edit. Click 'Save Directory Changes' below the table to persist your edits."
+    "tip": "Truncate full names to just their first name (or how people will be called in feedback). Double-click any cell in the 'Spreadsheet Name' column to edit. Click 'Save Directory Changes' below the table to persist your edits."
   },
   "spreadsheet_selection": {
     "title": "Spreadsheet Selection & Upload",
-    "description": "Select an existing Excel file (.xlsx) from the 'spreadsheets/' folder or drag-and-drop a new form export.",
+    "description": "Select an existing Excel file (.xlsx) from the local cache or drag-and-drop a new form export.",
     "tip": "Export your Google Form responses as an Excel file (.xlsx) and drop it here."
   },
   "mode_detection": {
     "title": "Automatic Format Detection",
-    "description": "Analyzes sheet column headers against known member names and search keywords to automatically determine if the file is in PD Mode or LC Mode.",
+    "description": "Analyzes sheet column headers against known member names and search keywords to automatically determine if the file is used for PPs or for EOQM/EOYM.",
     "tip": "If the sheet contains columns matching keywords like 'Group' and 'Individual', PD mode is chosen. If columns match member names directly, LC mode is chosen."
   },
   "mode_override": {
@@ -56,8 +56,8 @@
   },
   "message_header": {
     "title": "Message Header Banner",
-    "description": "Customizable banner text placed at the very top of each Slack DM, identifying which practice performance, event, or review cycle the feedback belongs to.",
-    "tip": "Defaults to 'Feedback: <Spreadsheet_Name>'. Formats automatically with a Slack emoji and divider bar."
+    "description": "Customizable banner text placed at the very top of each Slack DM, identifying which practice performance or event the feedback belongs to.",
+    "tip": "Defaults to '<Spreadsheet_Name> Feedback' with slack header formatting."
   },
   "sheet_preview": {
     "title": "Spreadsheet Header & Row Inspector",
@@ -66,13 +66,13 @@
   },
   "optional_settings": {
     "title": "Optional & Advanced Settings",
-    "description": "Collapsible settings panel containing your Slack bot token, keyword categories for group detection, and 'config.json' file import/export.",
-    "tip": "Tucked away by default to keep the main workflow clean and uncluttered."
+    "description": "Collapsible settings panel containing your Slack bot token, keyword categories for auto-detection, and 'config.json' file import/export.",
+    "tip": "Tucked away by default, since these features are seldom used/modified."
   },
   "slack_token": {
     "title": "Slack Bot Token (SLACK_BOT_TOKEN)",
     "description": "Your workspace's Slack Bot OAuth token (starting with 'xoxb-'). Used for testing auth, fetching users, and delivering direct messages.",
-    "tip": "Click 'Test Slack Connection' to verify connectivity. On Streamlit Cloud, store this in App Settings → Secrets."
+    "tip": "Follow docs/slack_bot_setup.md to create and install your Slack bot. On Streamlit Cloud, store the token in App Settings → Secrets."
   },
   "group_keywords": {
     "title": "Group Column Keywords",
@@ -101,7 +101,7 @@
   },
   "groups_overview": {
     "title": "Performance Groups & Member Assignment",
-    "description": "Review every detected performance piece or committee question, verify column pairings, and assign members who performed in each piece.",
+    "description": "Review detected song groups, verify column pairings, and assign members who performed in each piece.",
     "tip": "Member assignment determines who receives the feedback for that specific group or song."
   },
   "auto_detect_all": {
@@ -118,11 +118,6 @@
     "title": "Clear All Group Names",
     "description": "Empties member assignments across all groups without deleting the group configurations.",
     "tip": "Useful if you want to start fresh or re-run auto-detection with updated roster names."
-  },
-  "reset_groups": {
-    "title": "Reset Groups from Spreadsheet",
-    "description": "Re-runs column detection on the spreadsheet headers, restoring the initial detected groups and clearing overrides.",
-    "tip": "Use this if you accidentally deleted a group or modified column dropdowns incorrectly."
   },
   "group_card": {
     "title": "Group Card Configuration",
@@ -142,7 +137,7 @@
   "member_multiselect": {
     "title": "Member Assignment Multi-Select",
     "description": "Select members who performed in this group. You can search known names or type a custom name and press Enter to add a new member.",
-    "tip": "Typing a new name automatically creates an entry for them in the directory."
+    "tip": "Typing a new name automatically creates an entry for them in the directory. Add members here who didn't get individual feedback for a song"
   },
   "detect_single_group": {
     "title": "Detect Members for Group",
@@ -165,9 +160,9 @@
     "tip": "Click this button whenever you change group member assignments to refresh the preview in Step 3."
   },
   "lc_overview": {
-    "title": "Leadership Committee (LC) Column Mapping",
-    "description": "In LC mode, columns in the spreadsheet correspond directly to member names. Each member receives all feedback rows under their column.",
-    "tip": "Verify that all columns matched the expected members."
+    "title": "LC Column Mapping",
+    "description": "LC mode corresponds to EOQM/EOYM personal feedback, so columns in the spreadsheet correspond directly to member names. Each member receives all feedback rows under their column.",
+    "tip": "Verify that all columns matched with the expected members."
   },
   "comments_overview": {
     "title": "Step 3: Sample & Comment Preview",
@@ -186,7 +181,7 @@
   },
   "slack_dm_preview": {
     "title": "Authentic Slack DM Simulated Preview",
-    "description": "A pixel-accurate simulation of the Slack desktop/mobile Direct Message interface, rendering bold text, section dividers, and header banners.",
+    "description": "Replicates a Slack desktop/mobile Direct Message interface, rendering text/formatting in the same way slack would.",
     "tip": "Toggle between dark and light themes using the theme dropdown."
   },
   "raw_markdown": {
@@ -201,13 +196,13 @@
   },
   "audit_all": {
     "title": "Audit All Recipients at Once",
-    "description": "A searchable audit list displaying the generated feedback for all recipients simultaneously with a real-time name filter.",
+    "description": "A searchable audit list displaying the generated feedback for all recipients simultaneously with name filtering.",
     "tip": "Type in the search box to quickly inspect a specific member's notes."
   },
   "send_overview": {
     "title": "Step 4: Review & Dispatch Messages",
-    "description": "The final stage where you can send a test DM to yourself first, choose which recipients to include, and broadcast messages.",
-    "tip": "Always send a test message first to verify that your Slack bot token works."
+    "description": "The final stage where you can send a test DM first, choose which recipients to include, and broadcast messages.",
+    "tip": "Always send a test message to yourself first to verify that your Slack bot token works."
   },
   "recipient_checklist": {
     "title": "Recipient Selection Checklist",
@@ -216,17 +211,17 @@
   },
   "test_send": {
     "title": "Send Single Test Message First",
-    "description": "Delivers a sample message directly and exclusively to your own Slack User ID or a test channel, without notifying actual members.",
+    "description": "Delivers a sample message directly and exclusively to your own Slack User ID or a test channel, without notifying other members.",
     "tip": "Enter your own Slack User ID (e.g. 'U0XXXXXXXXX') and verify that the message appears in your Slack app."
   },
   "broadcast_confirmation": {
     "title": "Safety Broadcast Confirmation",
-    "description": "A safety checkbox required before unlocking the bulk send button, preventing accidental live broadcasts.",
+    "description": "A safety checkbox required before unlocking the bulk send button, preventing accidental broadcasts.",
     "tip": "Check this box only after you have previewed comments and sent a successful test message."
   },
   "broadcast_button": {
     "title": "Live Dispatch & Delivery Logs",
-    "description": "Sends messages to all checked recipients via Slack's chat.postMessage API with rate limiting and exponential backoff.",
+    "description": "Sends messages to all checked recipients via Slack's chat.postMessage API.",
     "tip": "Watch the progress bar and live delivery log to confirm successful delivery for each member."
   }
 }

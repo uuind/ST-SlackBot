@@ -1,7 +1,7 @@
 {
   "common": {
     "app_name": "ST SlackBot",
-    "app_subtitle": "Personal Feedback Dispatcher for Practice Performances & Committee Notes",
+    "app_subtitle": "Personal Feedback Dispatcher for Practice Performances & Personal Feedback",
     "logout": "Log Out",
     "save": "Save",
     "cancel": "Cancel",
@@ -16,7 +16,7 @@
   },
   "auth": {
     "login_title": "🔐 User Login",
-    "login_caption": "Please sign in with your authorized username and password.",
+    "login_caption": "Please sign in with your username and password.",
     "username_label": "Username",
     "password_label": "Password",
     "sign_in_btn": "Sign In",
@@ -44,7 +44,7 @@
     "step_caption": "Manage member Slack IDs, load your performance feedback spreadsheet, and confirm auto-detected modes.",
     "roster_heading": "Member Roster & Slack IDs",
     "members_loaded": "{count} members loaded",
-    "fetch_slack_btn": "🤖 Fetch Slack",
+    "fetch_slack_btn": "🏷️ Fetch Slack IDs",
     "fetch_slack_help": "Queries Slack API users.list via users:read to populate members & IDs",
     "import_json_btn": "📁 Import JSON",
     "import_json_pop_title": "Upload Member Roster JSON",
@@ -60,7 +60,7 @@
     "src_existing": "Existing from folder",
     "src_upload": "Upload new (.xlsx)",
     "no_sheets_found": "No spreadsheets found in '{folder}/'.",
-    "auto_detected_fmt": "🤖 Auto-detected: {mode} Mode — {reason}",
+    "auto_detected_fmt": "🛠️ Auto-detected: {mode} Mode — {reason}",
     "override_active_fmt": "⚠️ Override Active: Using {mode} Mode (Sheet format was detected as {detected})",
     "switch_mode_btn": "Switch to {mode}",
     "header_banner_label": "📝 Message Header Banner",
@@ -94,7 +94,6 @@
     "auto_detect_all_btn": "🪄 Auto-Detect All from Comments",
     "add_group_btn": "➕ Add New Group",
     "clear_names_btn": "🧹 Clear All Group Names",
-    "reset_groups_btn": "🔄 Reset Groups from Sheet",
     "metric_total_groups": "Total Groups",
     "metric_members_assigned": "Members Assigned",
     "metric_unassigned_dir": "Unassigned Directory Members",
@@ -118,7 +117,7 @@
     "lc_matched_success": "Found {count} columns matching member names.",
     "lc_no_matches": "No columns in this spreadsheet directly match member names in name_list.json.",
     "lc_unmatched_warning": "⚠️ {count} member(s) in name_list.json do not have a feedback column in this spreadsheet: {members}",
-    "lc_generate_btn": "💬 Generate LC Comments & Proceed to Preview ➡️"
+    "lc_generate_btn": "💬 Generate Personal Comments & Proceed to Preview ➡️"
   },
   "preview": {
     "step_title": "💬 Step 3: Review Sample Comments",

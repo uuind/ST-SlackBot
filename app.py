@@ -603,21 +603,27 @@ with st.sidebar:
 
     # Advanced Settings (Collapsed Expander)
     with st.expander("⚙️ Advanced Settings", expanded=False):
-        st.markdown(f"**Search Keywords** {gb('group_keywords')}", unsafe_allow_html=True)
+        st.markdown(f"**⚙️ Advanced Settings** {gb('optional_settings')}", unsafe_allow_html=True)
+        st.markdown(f"**Group Column Terms** {gb('group_keywords')}", unsafe_allow_html=True)
         g_terms_in = st.text_input(
             "Group Column Terms",
             value=", ".join(config.group_search_list),
-            help="Terms identifying group columns"
+            help="Terms identifying group columns",
+            label_visibility="collapsed"
         )
+        st.markdown(f"**Individual Column Terms** {gb('indiv_keywords')}", unsafe_allow_html=True)
         i_terms_in = st.text_input(
             "Individual Column Terms",
             value=", ".join(config.indiv_search_list),
-            help="Terms identifying individual columns"
+            help="Terms identifying individual columns",
+            label_visibility="collapsed"
         )
+        st.markdown(f"**Excluded Header Terms** {gb('exclude_keywords')}", unsafe_allow_html=True)
         e_terms_in = st.text_input(
             "Excluded Header Terms",
             value=", ".join(config.exclude_search_list),
-            help="Terms to ignore from group detection (e.g. PDs, ADs, Leadership, Timestamp)"
+            help="Terms to ignore from group detection (e.g. PDs, ADs, Leadership, Timestamp)",
+            label_visibility="collapsed"
         )
         if st.button("💾 Save Keywords", key="sb_save_keywords", use_container_width=True):
             up_group = [t.strip() for t in g_terms_in.split(",") if t.strip()]
@@ -663,47 +669,82 @@ with st.sidebar:
                 key="sb_cfg_export"
             )
 
+        st.markdown("---")
+        st.link_button("📖 View README on GitHub", "https://github.com/uuind/ST-SlackBot#readme", use_container_width=True)
+
 
 # -----------------------------------------------------------------------------
 # Main Header
 # -----------------------------------------------------------------------------
-col_title, col_ctrls = st.columns([3, 1.2])
+col_title, col_ctrls = st.columns([2.2, 1.8])
 with col_title:
     st.markdown(f'<div class="main-title">{i18n.t("header.title")} {gb("app_header")}</div>', unsafe_allow_html=True)
     u_label = st.session_state.get("user_label", "Admin")
     st.caption(f"Logged in as **@{u_label}**")
 
 with col_ctrls:
-    c_badge, c_guide = st.columns([1, 1.2])
+    c_badge, c_readme, c_guide = st.columns([1, 1.1, 1.4])
     with c_badge:
         mode_badge_html = f'<div style="text-align: right; margin-top: 6px;"><span class="{"badge-pd" if config.mode == "PD" else "badge-lc"}">{config.mode} MODE</span> {gb("mode_badge")}</div>'
         st.markdown(mode_badge_html, unsafe_allow_html=True)
+    with c_readme:
+        st.link_button("📖 README", "https://github.com/uuind/ST-SlackBot#readme", use_container_width=True, help="Open project documentation and README on GitHub")
     with c_guide:
         is_guide = st.session_state.get("guide_mode", False)
         guide_label = "✕ Exit Guide" if is_guide else "🧭 Help Guide"
         guide_type = "primary" if is_guide else "secondary"
-        if st.button(guide_label, key="main_header_guide_btn", type=guide_type, use_container_width=True, help="Toggle interactive help tooltips over UI elements"):
-            st.session_state["guide_mode"] = not is_guide
-            st.rerun()
+        c_gb_btn, c_gb_icon = st.columns([4, 1])
+        with c_gb_btn:
+            if st.button(guide_label, key="main_header_guide_btn", type=guide_type, use_container_width=True, help="Toggle interactive help tooltips over UI elements"):
+                st.session_state["guide_mode"] = not is_guide
+                st.rerun()
+        with c_gb_icon:
+            st.markdown(f"<div style='margin-top: 6px;'>{gb('guide_toggle')}</div>", unsafe_allow_html=True)
 
 # Single dismissible banner when Guide Mode is active
 if st.session_state.get("guide_mode", False):
-    c_gb1, c_gb2 = st.columns([5, 1.5])
+    g_status = i18n.get_guide_status()
+    total_loaded = g_status.get("loaded_count", 0)
+    c_gb1, c_gb2 = st.columns([5, 1.8])
     with c_gb1:
-        st.info("💡 **Interactive Guide Active:** Hover over any purple `?` badge to see helpful explanations.")
+        st.info(f"💡 **Interactive Guide Active:** Hover over any purple `?` badge to see helpful tips. `{total_loaded}/{total_loaded} topics loaded & verified ✅`")
     with c_gb2:
-        with st.popover("📖 All Help Topics", use_container_width=True):
-            st.markdown("###### Help Topics Index")
+        with st.popover(f"📖 Help Index ({total_loaded})", use_container_width=True):
+            st.markdown("###### 📖 Help Topics Index")
+            if st.button("🔄 Reload & Verify Guide Tips", key="reload_guide_btn", use_container_width=True):
+                i18n.reload()
+                st.toast(f"✅ Verified: {len(i18n.get_all_guide_explanations())} guide topics loaded and active!", icon="📖")
+                st.rerun()
+
             all_exps = i18n.get_all_guide_explanations()
-            q = st.text_input("Filter topics:", placeholder="Search...", key="pop_topic_search")
-            for k, info in all_exps.items():
-                if q and q.lower() not in (k + info.get("title", "") + info.get("description", "")).lower():
-                    continue
-                st.markdown(f"**{info.get('title', k)}**")
-                st.write(info.get("description", ""))
-                if info.get("tip"):
-                    st.caption(f"💡 {info['tip']}")
-                st.markdown("---")
+            categories = i18n.get_guide_categories()
+            tab_names = ["All"] + list(categories.keys())
+            guide_tabs = st.tabs(tab_names)
+
+            for tab_idx, cat_name in enumerate(tab_names):
+                with guide_tabs[tab_idx]:
+                    if cat_name == "All":
+                        cat_keys = list(all_exps.keys())
+                    else:
+                        cat_keys = categories.get(cat_name, [])
+
+                    q = st.text_input(f"Filter topics:", placeholder="Search...", key=f"pop_search_{tab_idx}")
+                    matched = 0
+                    for k in cat_keys:
+                        info = all_exps.get(k, {})
+                        if not info:
+                            continue
+                        text_to_search = f"{k} {info.get('title', '')} {info.get('description', '')} {info.get('tip', '')}".lower()
+                        if q and q.lower() not in text_to_search:
+                            continue
+                        matched += 1
+                        st.markdown(f"**{info.get('title', k)}**")
+                        st.write(info.get("description", ""))
+                        if info.get("tip"):
+                            st.caption(f"💡 {info['tip']}")
+                        st.markdown("---")
+                    if matched == 0:
+                        st.caption("No matching topics found.")
 
 
 # -----------------------------------------------------------------------------
@@ -757,6 +798,7 @@ if active_step == 1:
             with c_rt:
                 with st.popover("⚙️ Tools", use_container_width=True):
                     st.markdown("###### Directory Tools")
+                    st.markdown(f"<div style='font-size:0.8rem; color:#6366f1; margin-bottom:6px;'>Fetch {gb('roster_fetch')} | Import {gb('roster_import')} | Export {gb('roster_export')}</div>", unsafe_allow_html=True)
                     if st.button("🏷️ Fetch from Slack", use_container_width=True, help="Queries Slack API users.list via users:read to populate members & IDs"):
                         active_tok = get_active_token()
                         with st.spinner("Fetching members from Slack..."):
@@ -816,7 +858,7 @@ if active_step == 1:
                         refresh_name_list()
                         st.rerun()
 
-            st.caption("Double-click any cell below to match names or edit Slack IDs:")
+            st.markdown(f"<div style='font-size:0.85rem; color:#9ca3af; margin-bottom:4px;'>Double-click any cell below to match names or edit Slack IDs: {gb('roster_editor')}</div>", unsafe_allow_html=True)
             slack_meta_cache = st.session_state.get("slack_user_meta", {})
             name_records = []
             for k, v in st.session_state["name_dict"].items():
@@ -926,36 +968,53 @@ if active_step == 1:
                             paired, _, _ = bot_logic.detect_groups_pd(
                                 headers, config.group_search_list, config.indiv_search_list, config.exclude_search_list
                             )
-                            st.session_state["group_configs"] = [
-                                {
-                                    "id": f"grp_{i}_{int(time.time()*1000)}",
-                                    "group_name": p["group_name"],
-                                    "group_col": p["group_col"],
-                                    "indiv_name": p["indiv_name"],
-                                    "indiv_col": p["indiv_col"],
+                            if paired:
+                                st.session_state["group_configs"] = [
+                                    {
+                                        "id": f"grp_{i}_{int(time.time()*1000)}",
+                                        "group_name": p["group_name"],
+                                        "group_col": p["group_col"],
+                                        "indiv_name": p["indiv_name"],
+                                        "indiv_col": p["indiv_col"],
+                                        "members": []
+                                    }
+                                    for i, p in enumerate(paired)
+                                ]
+                            else:
+                                # When groups haven't been detected yet, ensure exactly 1 group is visible
+                                default_gid = f"grp_0_{int(time.time()*1000)}"
+                                st.session_state["group_configs"] = [{
+                                    "id": default_gid,
+                                    "group_name": "Group 1",
+                                    "group_col": 1 if len(headers) > 0 else None,
+                                    "indiv_name": None,
+                                    "indiv_col": None,
                                     "members": []
-                                }
-                                for i, p in enumerate(paired)
-                            ]
+                                }]
+                                st.session_state[f"members_{default_gid}"] = []
                         st.toast(f"Loaded {loaded_file_label} ({detected_mode} Mode)", icon="📄")
                         st.rerun()
 
                     # Mode & Status Indicator
-                    c_det_banner, c_det_toggle = st.columns([3, 1])
+                    c_det_banner, c_det_toggle = st.columns([3, 1.2])
                     with c_det_banner:
                         if config.mode == detected_mode:
-                            st.info(f"🤖 **Auto-detected:** `{detected_mode} Mode` ({detect_reason})")
+                            st.info(f"🤖 **Auto-detected:** `{detected_mode} Mode` ({detect_reason}) {gb('mode_detection')}")
                         else:
-                            st.warning(f"⚠️ **Override Active:** Using **{config.mode} Mode** (detected as `{detected_mode}`)")
+                            st.warning(f"⚠️ **Override Active:** Using **{config.mode} Mode** (detected as `{detected_mode}`) {gb('mode_detection')}")
                     with c_det_toggle:
                         other_mode = "LC" if config.mode == "PD" else "PD"
-                        if st.button(f"Switch to {other_mode}", use_container_width=True):
-                            config.mode = other_mode
-                            cfg = config.load_config()
-                            cfg["mode"] = other_mode
-                            config.save_config(cfg)
-                            clear_group_gui_state()
-                            st.rerun()
+                        c_sw_btn, c_sw_gb = st.columns([4, 1])
+                        with c_sw_btn:
+                            if st.button(f"Switch to {other_mode}", use_container_width=True):
+                                config.mode = other_mode
+                                cfg = config.load_config()
+                                cfg["mode"] = other_mode
+                                config.save_config(cfg)
+                                clear_group_gui_state()
+                                st.rerun()
+                        with c_sw_gb:
+                            st.markdown(f"<div style='margin-top:6px;'>{gb('mode_override')}</div>", unsafe_allow_html=True)
 
                     # Message Header Banner
                     current_header = st.session_state.get("message_header_text", "")
@@ -980,6 +1039,7 @@ if active_step == 1:
                         st.rerun()
 
                     with st.expander("👀 View Sample Rows", expanded=False):
+                        st.markdown(f"**Spreadsheet Inspector** {gb('sheet_preview')}", unsafe_allow_html=True)
                         rows_data = []
                         for r in range(1, min(sheet.max_row + 1, 5)):
                             row_vals = [sheet.cell(row=r, column=c).value for c in range(1, len(headers) + 1)]
@@ -997,6 +1057,8 @@ if active_step == 1:
     st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
     if "sheet" in st.session_state:
         target_step_title = "Review Groups" if config.mode == "PD" else "Review Columns"
+        if st.session_state.get("guide_mode"):
+            st.markdown(f"<div style='font-size:0.82rem; color:#6366f1; margin-bottom:4px;'>Proceed Action: {gb('parse_proceed_button')}</div>", unsafe_allow_html=True)
         if st.button(f"Continue to Step 2: {target_step_title} ➡️", type="primary", use_container_width=True):
             trigger_parse_comments(st.session_state["sheet"])
             go_to_step(2)
@@ -1025,19 +1087,32 @@ elif active_step == 2:
 
             if not st.session_state["group_configs"]:
                 paired, _, _ = bot_logic.detect_groups_pd(headers, config.group_search_list, config.indiv_search_list, config.exclude_search_list)
-                initial_configs = []
-                for i, p in enumerate(paired):
-                    gid = f"grp_{i}_{int(time.time()*1000)}"
-                    initial_configs.append({
-                        "id": gid,
-                        "group_name": p["group_name"],
-                        "group_col": p["group_col"],
-                        "indiv_name": p["indiv_name"],
-                        "indiv_col": p["indiv_col"],
+                if paired:
+                    initial_configs = []
+                    for i, p in enumerate(paired):
+                        gid = f"grp_{i}_{int(time.time()*1000)}"
+                        initial_configs.append({
+                            "id": gid,
+                            "group_name": p["group_name"],
+                            "group_col": p["group_col"],
+                            "indiv_name": p["indiv_name"],
+                            "indiv_col": p["indiv_col"],
+                            "members": []
+                        })
+                        st.session_state[f"members_{gid}"] = []
+                    st.session_state["group_configs"] = initial_configs
+                else:
+                    # When groups haven't been detected yet, ensure exactly 1 group is visible
+                    default_gid = f"grp_0_{int(time.time()*1000)}"
+                    st.session_state["group_configs"] = [{
+                        "id": default_gid,
+                        "group_name": "Group 1",
+                        "group_col": 1 if len(headers) > 0 else None,
+                        "indiv_name": None,
+                        "indiv_col": None,
                         "members": []
-                    })
-                    st.session_state[f"members_{gid}"] = []
-                st.session_state["group_configs"] = initial_configs
+                    }]
+                    st.session_state[f"members_{default_gid}"] = []
 
             # Automatically purge any non-performance/organizer feedback headers (e.g. Question/Comments for PDs/ADs)
             st.session_state["group_configs"] = [
@@ -1045,24 +1120,18 @@ elif active_step == 2:
                 if not bot_logic.is_excluded_group_header(g.get("group_name", ""), exclude_terms=config.exclude_search_list)
             ]
 
-            def cb_reset_groups():
-                sheet_obj = st.session_state.get("sheet")
-                if not sheet_obj:
-                    return
-                hdrs = st.session_state.get("headers", bot_logic.get_sheet_headers(sheet_obj))
-                clear_group_gui_state()
-                paired, _, _ = bot_logic.detect_groups_pd(hdrs, config.group_search_list, config.indiv_search_list, config.exclude_search_list)
-                st.session_state["group_configs"] = [
-                    {
-                        "id": f"grp_{i}_{int(time.time()*1000)}",
-                        "group_name": p["group_name"],
-                        "group_col": p["group_col"],
-                        "indiv_name": p["indiv_name"],
-                        "indiv_col": p["indiv_col"],
-                        "members": []
-                    }
-                    for i, p in enumerate(paired)
-                ]
+            # If all groups were purged or empty, maintain 1 visible group
+            if not st.session_state["group_configs"]:
+                default_gid = f"grp_0_{int(time.time()*1000)}"
+                st.session_state["group_configs"] = [{
+                    "id": default_gid,
+                    "group_name": "Group 1",
+                    "group_col": 1 if len(headers) > 0 else None,
+                    "indiv_name": None,
+                    "indiv_col": None,
+                    "members": []
+                }]
+                st.session_state[f"members_{default_gid}"] = []
 
             def cb_add_new_group(headers_len):
                 new_group_num = len(st.session_state["group_configs"]) + 1
@@ -1143,6 +1212,18 @@ elif active_step == 2:
                 member_k = f"members_{group_id}"
                 if member_k in st.session_state:
                     del st.session_state[member_k]
+                # If all groups removed, ensure 1 group remains visible
+                if not st.session_state["group_configs"]:
+                    default_gid = f"grp_0_{int(time.time()*1000)}"
+                    st.session_state["group_configs"] = [{
+                        "id": default_gid,
+                        "group_name": "Group 1",
+                        "group_col": 1 if len(headers) > 0 else None,
+                        "indiv_name": None,
+                        "indiv_col": None,
+                        "members": []
+                    }]
+                    st.session_state[f"members_{default_gid}"] = []
 
             def cb_on_members_change(group_id):
                 new_m = list(st.session_state.get(f"members_{group_id}", []))
@@ -1168,9 +1249,9 @@ elif active_step == 2:
 
             # Action bar: Add, Auto-detect, Clear, Reset, Matrix
             if st.session_state.get("guide_mode"):
-                st.markdown(f"<div style='margin-bottom:4px; font-size:0.8rem; color:#6366f1;'><strong>Batch Controls:</strong> Add {gb('add_group')} | Auto-Detect {gb('auto_detect_all')} | Clear {gb('clear_group_names')} | Reset {gb('reset_groups')} | Matrix {gb('membership_summary')}</div>", unsafe_allow_html=True)
+                st.markdown(f"<div style='margin-bottom:4px; font-size:0.8rem; color:#6366f1;'><strong>Batch Controls:</strong> Add {gb('add_group')} | Auto-Detect {gb('auto_detect_all')} | Clear {gb('clear_group_names')} | Matrix {gb('membership_summary')}</div>", unsafe_allow_html=True)
 
-            c_act1, c_act2, c_act3, c_act4, c_act5 = st.columns([1.5, 2, 1.2, 1.4, 1.4])
+            c_act1, c_act2, c_act3, c_act4 = st.columns([1.5, 2.2, 1.3, 1.5])
             with c_act1:
                 st.button("➕ Add Group", on_click=cb_add_new_group, args=(len(headers),), use_container_width=True)
             with c_act2:
@@ -1178,8 +1259,6 @@ elif active_step == 2:
             with c_act3:
                 st.button("🧹 Clear All", on_click=cb_clear_all, use_container_width=True)
             with c_act4:
-                st.button("🔄 Reset Groups", on_click=cb_reset_groups, use_container_width=True, help="Reset groups back to spreadsheet auto-detection")
-            with c_act5:
                 with st.popover("📋 Member Matrix", use_container_width=True):
                     st.markdown(f"###### Member Matrix Overview {gb('membership_summary')}", unsafe_allow_html=True)
                     if all_assigned_members:
@@ -1320,7 +1399,7 @@ elif active_step == 2:
 
                     c_m_hdr, c_m_det, c_m_clr = st.columns([4, 1.2, 1])
                     with c_m_hdr:
-                        st.markdown(f"<div style='font-size:0.88rem; font-weight:600; margin-top:4px;'>Assigned Members ({len(current_m)}) {gb('member_multiselect')}</div>", unsafe_allow_html=True)
+                        st.markdown(f"<div style='font-size:0.88rem; font-weight:600; margin-top:4px;'>Assigned Members ({len(current_m)}) {gb('member_multiselect')} {gb('detect_single_group')}</div>", unsafe_allow_html=True)
                     with c_m_det:
                         st.button("🪄 Detect", key=f"btn_detect_{group_id}", on_click=cb_detect_group, args=(group_id,), use_container_width=True, help="Auto-detect members from comments for this group")
                     with c_m_clr:
@@ -1465,8 +1544,8 @@ elif active_step == 3:
         slack_id = st.session_state["name_dict"].get(selected_person)
         msg_text = full_msgs[selected_person]
 
-        # Tabbed preview: Clean Slack DM vs Raw Markdown
-        tab_dm, tab_raw = st.tabs(["📱 Slack DM Preview", "📝 Raw Payload"])
+        # Tabbed preview: Clean Slack DM vs Raw Markdown vs Section Breakdown
+        tab_dm, tab_raw, tab_sec = st.tabs(["📱 Slack DM Preview", "📝 Raw Payload", "🔍 Section Breakdown"])
         with tab_dm:
             st.markdown(f"##### 📱 Simulated Slack DM {gb('slack_dm_preview')}", unsafe_allow_html=True)
             slack_html = bot_logic.render_slack_dm_html("ST SlackBot", selected_person, slack_id, msg_text, theme="dark")
@@ -1474,6 +1553,16 @@ elif active_step == 3:
         with tab_raw:
             st.markdown(f"##### 📝 Raw API Payload {gb('raw_markdown')}", unsafe_allow_html=True)
             st.text_area("Payload", value=msg_text, height=350, disabled=True, label_visibility="collapsed")
+        with tab_sec:
+            st.markdown(f"##### 🔍 Section-by-Section Breakdown {gb('section_breakdown')}", unsafe_allow_html=True)
+            st.caption(f"Inspection of parsed feedback sections for **@{selected_person}**:")
+            sections = [s.strip() for s in msg_text.split("───") if s.strip()]
+            if sections:
+                for sec in sections:
+                    with st.container(border=True):
+                        st.text(sec)
+            else:
+                st.info("No section dividers detected in payload.")
 
         with st.expander(f"📋 Audit All {len(recipients)} Recipients", expanded=False):
             st.markdown(f"**Batch Audit Verification** {gb('audit_all')}", unsafe_allow_html=True)

@@ -102,11 +102,96 @@ def t(key: str, default: Optional[str] = None, **kwargs) -> str:
     return str(val)
 
 
+GUIDE_CATEGORIES = {
+    "General & Header": [
+        "app_header",
+        "guide_toggle",
+        "mode_badge"
+    ],
+    "Step 1: Setup & Data": [
+        "roster_directory",
+        "roster_fetch",
+        "roster_import",
+        "roster_export",
+        "roster_editor",
+        "spreadsheet_selection",
+        "mode_detection",
+        "mode_override",
+        "message_header",
+        "sheet_preview",
+        "parse_proceed_button"
+    ],
+    "Step 2: Groups & Assignments": [
+        "groups_overview",
+        "auto_detect_all",
+        "add_group",
+        "clear_group_names",
+        "membership_summary",
+        "unassigned_warnings",
+        "group_card",
+        "group_col_select",
+        "indiv_col_select",
+        "member_multiselect",
+        "detect_single_group",
+        "generate_comments_btn",
+        "lc_overview"
+    ],
+    "Step 3: Sample & Preview": [
+        "comments_overview",
+        "recipient_metrics",
+        "recipient_selector",
+        "slack_dm_preview",
+        "raw_markdown",
+        "section_breakdown",
+        "audit_all"
+    ],
+    "Step 4: Review & Send": [
+        "send_overview",
+        "recipient_checklist",
+        "test_send",
+        "broadcast_confirmation",
+        "broadcast_button"
+    ],
+    "Sidebar & Config": [
+        "optional_settings",
+        "slack_token",
+        "group_keywords",
+        "indiv_keywords",
+        "exclude_keywords",
+        "config_io"
+    ]
+}
+
+
+def get_guide_categories() -> Dict[str, list]:
+    """Return categorized index of all guide topic keys."""
+    return GUIDE_CATEGORIES
+
+
+def get_guide_status() -> Dict[str, Any]:
+    """Returns diagnostics confirming guide explanations are loaded and intact."""
+    if not _guide_data:
+        load_guide()
+    total = len(_guide_data)
+    valid_entries = sum(1 for v in _guide_data.values() if v.get("title") and v.get("description"))
+    return {
+        "loaded_count": total,
+        "valid_count": valid_entries,
+        "is_healthy": total > 0 and total == valid_entries,
+        "categories": {cat: [k for k in keys if k in _guide_data] for cat, keys in GUIDE_CATEGORIES.items()}
+    }
+
+
 def get_guide_explanation(key: str) -> Optional[Dict[str, str]]:
     """Retrieve title, description, and tip for a specific UI element."""
     if not _guide_data:
         load_guide()
-    return _guide_data.get(key)
+    res = _guide_data.get(key)
+    if not res:
+        # Reload once in case file was touched or modified externally
+        load_guide()
+        res = _guide_data.get(key)
+    return res
 
 
 def get_all_guide_explanations() -> Dict[str, Dict[str, str]]:
@@ -128,12 +213,15 @@ def guide_badge(key: str, is_active: bool = True) -> str:
 
     info = get_guide_explanation(key)
     if not info:
-        return ""
-
-    title = html.escape(str(info.get("title", "")))
-    desc = html.escape(str(info.get("description", "")))
-    tip = html.escape(str(info.get("tip", "")))
-    tip_html = f'<span class="guide-tooltip-tip">💡 <b>Tip:</b> {tip}</span>' if tip else ""
+        # Graceful fallback so a missing badge key is immediately visible to developer/user
+        title = html.escape(f"Help: {key.replace('_', ' ').title()}")
+        desc = html.escape(f"Explanation for '{key}' is being initialized.")
+        tip_html = ""
+    else:
+        title = html.escape(str(info.get("title", "")))
+        desc = html.escape(str(info.get("description", "")))
+        tip = html.escape(str(info.get("tip", "")))
+        tip_html = f'<span class="guide-tooltip-tip">💡 <b>Tip:</b> {tip}</span>' if tip else ""
 
     # Strictly single-line HTML with NO newlines
     return (
