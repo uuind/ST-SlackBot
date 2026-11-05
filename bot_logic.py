@@ -6,6 +6,7 @@ import html
 import requests
 from collections import defaultdict
 from openpyxl import load_workbook
+import config
 
 
 def load_name_list(filepath):
@@ -327,11 +328,240 @@ def detect_groups_pd(headers, group_terms=None, indiv_terms=None, exclude_terms=
     return paired_groups, group_cols, indiv_cols
 
 
-def auto_detect_members_for_group(sheet, indiv_col_idx, known_members, group_name=""):
+OBJECT_PREPOSITIONS = {
+    'to', 'with', 'like', 'as', 'from', 'at', 'near', 'behind', 'beside', 
+    'follow', 'following', 'than', 'into', 'on', 'about', 'against', 'after', 
+    'bc', 'because', 'between', 'of', 'towards', 'toward', 'alongside', 'under'
+}
+
+NAME_ALIASES = {
+    'johnathan': 'jonathan',
+    'isssaaaaaaa': 'issa',
+    'issaaaa': 'issa',
+    'miggy': 'miguel',
+    'nathaniel': 'nathaniel'
+}
+
+
+def harvest_dynamic_starters(corpus_or_sheet, known_members):
     """
-    Scans the individual feedback column and group header for mentions of known members.
+    Dynamically discovers starter/predicate vocabulary from text or openpyxl sheet
+    by observing words that immediately follow confirmed member name anchors (e.g.
+    at line starts, after punctuation, or with explicit markers like ':', '-', ',', '—').
+    """
+    starters = set()
+    n_set = {m.lower().strip() for m in known_members if m and str(m).strip()}
+
+    # Base grammatical markers that naturally start direct address predicates in English:
+    # 2nd-person pronouns and essential auxiliary verbs
+    starters.update({
+        'u', 'you', 'ur', 'your', 'youre', 'yours', 'yall',
+        'can', 'could', 'should', 'would', 'might', 'will',
+        'is', 'are', 'was', 'were', 'be', 'am',
+        'do', 'dont', 'did', 'have', 'had', 'has',
+        'good', 'great', 'nice', 'love', 'loved', 'like', 'liked', 'super', 'solid'
+    })
+
+    lines = []
+    if hasattr(corpus_or_sheet, "iter_rows"):
+        for row in corpus_or_sheet.iter_rows(values_only=True):
+            for cell in row:
+                if cell and isinstance(cell, str):
+                    lines.extend(cell.split("\n"))
+    elif isinstance(corpus_or_sheet, str):
+        lines = corpus_or_sheet.split("\n")
+    elif isinstance(corpus_or_sheet, (list, tuple, set)):
+        lines = list(corpus_or_sheet)
+
+    for line in lines:
+        l = line.strip()
+        if not l:
+            continue
+        # 1. Line starts with Name: e.g. "Name [punct/space] word"
+        m1 = re.match(r"^([a-zA-Z]+)(?:\s*[:\-–—,]\s*|\s+)([a-zA-Z]+)", l)
+        if m1:
+            cand, nxt = m1.group(1).lower(), m1.group(2).lower()
+            if cand in n_set and nxt not in n_set and len(nxt) > 1:
+                starters.add(nxt)
+
+        # 2. Major punctuation followed by Name: [.!?;&•—–]\s*Name\s*(?:[:\-–—,]|\s+)word
+        for m2 in re.finditer(r"[.!?;&•—–]\s*([a-zA-Z]+)(?:\s*[:\-–—,]\s*|\s+)([a-zA-Z]+)", l):
+            cand, nxt = m2.group(1).lower(), m2.group(2).lower()
+            if cand in n_set and nxt not in n_set and len(nxt) > 1:
+                starters.add(nxt)
+
+        # 3. Explicit marker anywhere: \bName\s*[:\-–—]\s*word
+        for m3 in re.finditer(r"\b([a-zA-Z]+)\s*[:\-–—]\s*([a-zA-Z]+)", l):
+            cand, nxt = m3.group(1).lower(), m3.group(2).lower()
+            if cand in n_set and nxt not in n_set and len(nxt) > 1:
+                starters.add(nxt)
+
+    return starters
+
+
+def find_member_mentions(text, members_list):
+    """
+    Finds occurrences of known members (and known aliases) in text at word boundaries.
+    Returns list of tuples: (start, end, canonical_name, matched_str).
+    """
+    mentions = []
+    text_lower = text.lower()
+    for m in members_list:
+        clean_m = str(m).strip().lower()
+        if not clean_m:
+            continue
+        for match in re.finditer(r'\b' + re.escape(clean_m) + r'\b', text_lower):
+            mentions.append((match.start(), match.end(), clean_m, text[match.start():match.end()]))
+
+    for alias, canonical in NAME_ALIASES.items():
+        if canonical in members_list or alias in text_lower:
+            target = canonical if canonical in members_list else alias
+            for match in re.finditer(r'\b' + re.escape(alias) + r'\b', text_lower):
+                mentions.append((match.start(), match.end(), target, text[match.start():match.end()]))
+
+    # Sort by start offset ascending, longer matches first to resolve duplicates
+    mentions.sort(key=lambda x: (x[0], -(x[1] - x[0])))
+    filtered = []
+    last_end = -1
+    for start, end, canon, raw in mentions:
+        if start >= last_end:
+            filtered.append((start, end, canon, raw))
+            last_end = end
+    return filtered
+
+
+def is_addressee_anchor(text, match_start, match_end, member_name, dynamic_starters=None):
+    """
+    Determines whether a name mention marks the start of a comment addressed to that member,
+    versus an in-sentence mention/comparison (e.g. 'standing close to Kaelan').
+    """
+    prefix = text[:match_start]
+    suffix = text[match_end:]
+
+    words_before = re.findall(r'[a-zA-Z]+', prefix)
+    last_word = words_before[-1].lower() if words_before else ''
+
+    # Check if joined by 'and' or '&' to a previous object word (e.g. 'bc sophia and audrey')
+    if last_word in {'and', '&'} and len(words_before) >= 3:
+        if words_before[-3].lower() in OBJECT_PREPOSITIONS:
+            return False
+
+    has_boundary_after_last = bool(re.search(r'[\n.!?;&•—–]\s*$', prefix)) or bool(re.search(r'\s{2,}$', prefix))
+
+    if last_word in OBJECT_PREPOSITIONS and not has_boundary_after_last:
+        return False
+
+    is_at_start = bool(re.match(r'^\s*[-*•–—~>]?\s*$', prefix))
+    is_after_newline = bool(re.search(r'\n\s*[-*•–—~>]?\s*$', prefix))
+    is_after_major_punct = bool(re.search(r'[.!?;&•—–]\s*$', prefix)) or bool(re.search(r'\s{2,}$', prefix))
+    is_after_comma = bool(re.search(r',\s*$', prefix))
+
+    has_explicit_marker = bool(re.match(r'^\s*[:\-–—,\)]', suffix))
+    has_salutation_before = bool(re.search(r'\b(?:okay|ok|hey|hi|hello|for|maybe)\s*$', prefix, re.IGNORECASE))
+
+    if is_at_start or is_after_newline or is_after_major_punct:
+        return True
+    if has_salutation_before or has_explicit_marker:
+        return True
+    if is_after_comma:
+        return True
+
+    # Delimiter-less case (e.g. space between clauses without punctuation: "good Ava solo is nice")
+    post_words = re.findall(r'[a-zA-Z]+', suffix)
+    first_post_word = post_words[0].lower() if post_words else ''
+
+    is_post_starter = False
+    if dynamic_starters and first_post_word in dynamic_starters:
+        is_post_starter = True
+    elif re.match(r'^(?:u|ur|urs|you|your|yours|youre|yall)$', first_post_word):
+        is_post_starter = True
+    elif re.match(r'^(?:is|are|was|were|be|am|can|could|should|would|might|will|did|do|does|dont|had|has|have)$', first_post_word):
+        is_post_starter = True
+    elif len(first_post_word) > 3 and (first_post_word.endswith('ed') or first_post_word.endswith('ing')):
+        is_post_starter = True
+
+    if is_post_starter and bool(re.search(r'\s+$', prefix)):
+        return True
+
+    return False
+
+
+def extract_member_comments_from_cell(cell_val, known_members, dynamic_starters=None):
+    """
+    Extracts member-specific comments from an individual feedback cell.
+    Handles multi-line paragraphs, un-delimited short responses, and inconsistent delimiters
+    (newlines, commas, semicolons, dashes, periods, em-dashes, or spaces).
+    Returns list of tuples: [(member_name, comment_snippet), ...]
+    """
+    if not cell_val or not str(cell_val).strip():
+        return []
+
+    if dynamic_starters is None:
+        dynamic_starters = harvest_dynamic_starters(str(cell_val), known_members)
+
+    text = str(cell_val).strip()
+    lines = text.split('\n')
+    results = []
+
+    for line in lines:
+        line_clean = line.strip()
+        if not line_clean:
+            continue
+
+        mentions = find_member_mentions(line_clean, known_members)
+        if not mentions:
+            continue
+
+        addressees = []
+        for start, end, canon, raw in mentions:
+            if is_addressee_anchor(line_clean, start, end, canon, dynamic_starters=dynamic_starters):
+                addressees.append((start, end, canon, raw))
+
+        if not addressees:
+            # Fallback: if names were mentioned in a single-mention line, attribute line to each mentioned member
+            for start, end, canon, raw in mentions:
+                results.append((canon, line_clean))
+            continue
+
+        if len(addressees) == 1:
+            results.append((addressees[0][2], line_clean))
+        else:
+            # Check for compound addressees at start: e.g. 'Name1 and Name2: [comment]'
+            compound_match = re.match(r'^\s*([a-zA-Z]+)\s+(?:and|&)\s+([a-zA-Z]+)\s*[:,\-–—]', line_clean)
+            if compound_match:
+                n1 = compound_match.group(1).lower()
+                n2 = compound_match.group(2).lower()
+                results.append((n1, line_clean))
+                results.append((n2, line_clean))
+                continue
+
+            # Merge consecutive mentions of the same member
+            merged_addressees = []
+            for a in addressees:
+                if merged_addressees and merged_addressees[-1][2] == a[2]:
+                    continue
+                merged_addressees.append(a)
+
+            for idx in range(len(merged_addressees)):
+                cur_start, cur_end, cur_canon, cur_raw = merged_addressees[idx]
+                next_start = merged_addressees[idx + 1][0] if idx + 1 < len(merged_addressees) else len(line_clean)
+                segment = line_clean[cur_start:next_start].strip()
+                segment = re.sub(r'[\s,;]+$', '', segment).strip()
+                if segment:
+                    results.append((cur_canon, segment))
+
+    return results
+
+
+def auto_detect_members_for_group(sheet, indiv_col_idx, known_members, group_name="", group_col_idx=None):
+    """
+    Scans feedback columns and group header for mentions of known members.
+    If indiv_col_idx is provided, it scans individual feedback.
+    If the group has no individual comments column (or no members were detected in it),
+    and group_col_idx is provided, it scans the group comments column.
     """
     found_members = set()
+    dynamic_starters = harvest_dynamic_starters(sheet, known_members)
 
     # Check group name itself (e.g. 'Arashi: Frederick & Yuka')
     if group_name:
@@ -339,22 +569,33 @@ def auto_detect_members_for_group(sheet, indiv_col_idx, known_members, group_nam
             if re.search(r'\b' + re.escape(m.lower()) + r'\b', group_name.lower()):
                 found_members.add(m.lower())
 
-    # Check individual comments column
+    max_r = sheet.max_row or 0
+
+    # Check individual comments column if present
     if indiv_col_idx:
-        for row in range(2, sheet.max_row + 1):
+        for row in range(2, max_r + 1):
             cell_val = sheet.cell(row=row, column=indiv_col_idx).value
             if not cell_val:
                 continue
-            text = str(cell_val).lower()
-            for member in known_members:
-                if member.lower() in text:
-                    found_members.add(member.lower())
+            extracted = extract_member_comments_from_cell(cell_val, known_members, dynamic_starters=dynamic_starters)
+            for m, _ in extracted:
+                found_members.add(m.lower())
+
+    # For groups that don't have individual comments (or none were detected), scan group comments column
+    if (not indiv_col_idx or not found_members) and group_col_idx:
+        for row in range(2, max_r + 1):
+            cell_val = sheet.cell(row=row, column=group_col_idx).value
+            if not cell_val:
+                continue
+            extracted = extract_member_comments_from_cell(cell_val, known_members, dynamic_starters=dynamic_starters)
+            for m, _ in extracted:
+                found_members.add(m.lower())
 
     # Return in order of known_members
     return [m for m in known_members if m.lower() in found_members]
 
 
-def parse_pd_comments(sheet, group_configs, header_title=""):
+def parse_pd_comments(sheet, group_configs, header_title="", known_members=None):
     """
     Parses PD mode comments from sheet using the group configurations.
     group_configs is a list of dicts:
@@ -375,6 +616,20 @@ def parse_pd_comments(sheet, group_configs, header_title=""):
     comments_by_person = defaultdict(dict)
     group_feedback_cache = {}
 
+    if known_members is None:
+        all_assigned = set()
+        for c in group_configs:
+            all_assigned.update(c.get("members", []))
+        if hasattr(config, "name_filepath") and os.path.exists(config.name_filepath):
+            try:
+                name_list_data = load_name_list(config.name_filepath)
+                all_assigned.update(name_list_data.keys())
+            except Exception:
+                pass
+        known_members = sorted(list(all_assigned))
+
+    dynamic_starters = harvest_dynamic_starters(sheet, known_members)
+
     for config_item in group_configs:
         g_name = config_item["group_name"]
         g_col = config_item.get("group_col")
@@ -384,23 +639,68 @@ def parse_pd_comments(sheet, group_configs, header_title=""):
 
         # 1. Extract group feedback
         group_text = ""
+        max_r = sheet.max_row or 0
         if g_col:
             if g_col not in group_feedback_cache:
                 g_comments = ""
-                for r in range(2, sheet.max_row + 1):
+                for r in range(2, max_r + 1):
                     val = sheet.cell(row=r, column=g_col).value
                     if val is not None and str(val).strip():
                         g_comments += str(val).strip() + "\n"
                 group_feedback_cache[g_col] = g_comments
             group_text = group_feedback_cache.get(g_col, "")
 
-        # 2. Extract individual lines
-        indiv_lines = []
+        # 2. Extract individual lines per member using smart addressee segmentation
+        indiv_comments_by_person = defaultdict(list)
+        unassigned_indiv_comments = []
+
+        def _is_trivial_placeholder(s):
+            clean = re.sub(r"[^a-zA-Z0-9]", "", str(s).lower())
+            return clean in {"", "na", "none", "no", "nope", "n", "nil", "null", "x"}
+
         if i_col:
-            for r in range(2, sheet.max_row + 1):
+            member_set = set(members)
+            for r in range(2, max_r + 1):
                 val = sheet.cell(row=r, column=i_col).value
                 if val is not None and str(val).strip():
-                    indiv_lines.extend(str(val).strip().split("\n"))
+                    cell_text = str(val).strip()
+                    for line in cell_text.split("\n"):
+                        line_clean = line.strip()
+                        if not line_clean:
+                            continue
+
+                        extracted = extract_member_comments_from_cell(line_clean, known_members, dynamic_starters=dynamic_starters)
+                        if not extracted:
+                            if not _is_trivial_placeholder(line_clean):
+                                unassigned_indiv_comments.append(line_clean)
+                            continue
+
+                        # If multiple addressees in a single line, check if there was a standalone leading comment
+                        if len(extracted) > 1:
+                            mentions = find_member_mentions(line_clean, known_members)
+                            addressees = [m for m in mentions if is_addressee_anchor(line_clean, m[0], m[1], m[2], dynamic_starters=dynamic_starters)]
+                            if addressees and addressees[0][0] > 0:
+                                prefix = line_clean[:addressees[0][0]].strip()
+                                if re.search(r"[.!?;&—–]\s*$", prefix) and len(prefix) > 3:
+                                    prefix_clean = prefix.rstrip(".!?;&—– ").strip()
+                                    if not _is_trivial_placeholder(prefix_clean) and not re.match(r"^(?:ok|okay|hey|hi|hello|for)\b", prefix_clean, re.I):
+                                        unassigned_indiv_comments.append(prefix.strip())
+
+                        for target_m, snippet in extracted:
+                            if target_m.lower() in member_set:
+                                indiv_comments_by_person[target_m.lower()].append(snippet)
+                            else:
+                                # Feedback in this group's individual column addressed to someone NOT assigned to this group
+                                if not _is_trivial_placeholder(snippet):
+                                    unassigned_indiv_comments.append(snippet)
+
+        # Merge unassigned individual comments into group comments if columns differ
+        if g_col != i_col and unassigned_indiv_comments:
+            unassigned_block = "\n".join(unassigned_indiv_comments)
+            if group_text and group_text.strip():
+                group_text = group_text.strip() + "\n" + unassigned_block + "\n"
+            else:
+                group_text = unassigned_block + "\n"
 
         # 3. Assign to members
         for person in members:
@@ -409,11 +709,10 @@ def parse_pd_comments(sheet, group_configs, header_title=""):
                 comments_by_person[person][g_name] = group_text
 
             # Filter individual comments if present
-            if indiv_lines and i_col:
-                person_indiv = [line.strip() for line in indiv_lines if person in line.lower() and line.strip()]
-                indiv_text = "\n".join(person_indiv)
-                if indiv_text:
-                    comments_by_person[person][i_name] = indiv_text
+            if i_col:
+                p_comments = indiv_comments_by_person.get(person, [])
+                if p_comments:
+                    comments_by_person[person][i_name] = "\n".join(p_comments)
 
     # Format full messages
     full_message_by_person = {}
@@ -472,7 +771,8 @@ def parse_lc_comments(sheet, person_list, header_title=""):
         if header_lower in normalized_persons:
             person_key = header_lower
             col_comments = []
-            for r in range(2, sheet.max_row + 1):
+            max_r = sheet.max_row or 0
+            for r in range(2, max_r + 1):
                 val = sheet.cell(row=r, column=col_idx).value
                 if val is not None and str(val).strip():
                     col_comments.append(str(val).strip())

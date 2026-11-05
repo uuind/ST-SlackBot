@@ -1155,8 +1155,9 @@ elif active_step == 2:
                 for g in st.session_state.get("group_configs", []):
                     gid = g.get("id")
                     i_col = st.session_state.get(f"i_col_{gid}", g.get("indiv_col"))
+                    g_col = st.session_state.get(f"g_col_{gid}", g.get("group_col"))
                     g_nm = st.session_state.get(f"name_{gid}", g.get("group_name", ""))
-                    detected = bot_logic.auto_detect_members_for_group(sheet_obj, i_col, all_known, group_name=g_nm)
+                    detected = bot_logic.auto_detect_members_for_group(sheet_obj, i_col, all_known, group_name=g_nm, group_col_idx=g_col)
                     g["members"] = detected
                     st.session_state[f"members_{gid}"] = detected
                 st.session_state["has_assigned_names"] = True
@@ -1176,9 +1177,10 @@ elif active_step == 2:
                 if not grp:
                     return
                 i_col = st.session_state.get(f"i_col_{group_id}", grp.get("indiv_col"))
+                g_col = st.session_state.get(f"g_col_{group_id}", grp.get("group_col"))
                 g_nm = st.session_state.get(f"name_{group_id}", grp.get("group_name", ""))
                 all_known = sorted(list(st.session_state["name_dict"].keys()))
-                detected = bot_logic.auto_detect_members_for_group(sheet_obj, i_col, all_known, group_name=g_nm)
+                detected = bot_logic.auto_detect_members_for_group(sheet_obj, i_col, all_known, group_name=g_nm, group_col_idx=g_col)
                 st.session_state[f"members_{group_id}"] = detected
                 grp["members"] = detected
                 st.session_state["has_assigned_names"] = True
@@ -1197,9 +1199,10 @@ elif active_step == 2:
                 if not grp:
                     return
                 i_col = st.session_state.get(f"i_col_{group_id}", grp.get("indiv_col"))
+                g_col = st.session_state.get(f"g_col_{group_id}", grp.get("group_col"))
                 g_nm = st.session_state.get(f"name_{group_id}", grp.get("group_name", ""))
                 all_known = sorted(list(st.session_state["name_dict"].keys()))
-                mentioned = bot_logic.auto_detect_members_for_group(sheet_obj, i_col, all_known, group_name=g_nm)
+                mentioned = bot_logic.auto_detect_members_for_group(sheet_obj, i_col, all_known, group_name=g_nm, group_col_idx=g_col)
                 cur = list(st.session_state.get(f"members_{group_id}", grp.get("members", [])))
                 updated = sorted(list(set(cur + mentioned)))
                 st.session_state[f"members_{group_id}"] = updated
@@ -1297,9 +1300,12 @@ elif active_step == 2:
                 all_sheet_mentions = set()
                 for g in st.session_state["group_configs"]:
                     indiv_col = st.session_state.get(f"i_col_{g.get('id')}", g.get("indiv_col"))
+                    group_col = st.session_state.get(f"g_col_{g.get('id')}", g.get("group_col"))
                     grp_name = st.session_state.get(f"name_{g.get('id')}", g.get("group_name", ""))
-                    if indiv_col or grp_name:
-                        m_list = bot_logic.auto_detect_members_for_group(sheet, indiv_col, all_known_members, group_name=grp_name)
+                    if indiv_col or group_col or grp_name:
+                        m_list = bot_logic.auto_detect_members_for_group(
+                            sheet, indiv_col, all_known_members, group_name=grp_name, group_col_idx=group_col
+                        )
                         all_sheet_mentions.update(m_list)
 
                 unassigned_sheet_mentions = sorted([m for m in all_sheet_mentions if m not in all_assigned_members])
@@ -1417,9 +1423,9 @@ elif active_step == 2:
                     )
                     group_item["members"] = st.session_state.get(member_key, [])
 
-                    if has_assigned_names and (selected_i_col or group_item.get("group_name")):
+                    if has_assigned_names and (selected_i_col or selected_g_col or group_item.get("group_name")):
                         mentioned_for_group = bot_logic.auto_detect_members_for_group(
-                            sheet, selected_i_col, all_known_members, group_name=group_item.get("group_name", "")
+                            sheet, selected_i_col, all_known_members, group_name=group_item.get("group_name", ""), group_col_idx=selected_g_col
                         )
                         missing_from_group = [m for m in mentioned_for_group if m not in current_m]
                         if missing_from_group:

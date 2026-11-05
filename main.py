@@ -55,7 +55,9 @@ def run_slackbot_process():
         group_configs = []
         for p in paired:
             group_name = p["group_name"]
-            auto_detected = bot_logic.auto_detect_members_for_group(sheet, p["indiv_col"], known_members)
+            auto_detected = bot_logic.auto_detect_members_for_group(
+                sheet, p["indiv_col"], known_members, group_name=group_name, group_col_idx=p["group_col"]
+            )
             default_str = ", ".join(auto_detected)
 
             prompt = f"Members in '{group_name}'"
