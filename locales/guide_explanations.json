@@ -164,6 +164,11 @@
     "description": "LC mode corresponds to EOQM/EOYM personal feedback, so columns in the spreadsheet correspond directly to member names. Each member receives all feedback rows under their column.",
     "tip": "Verify that all columns matched with the expected members."
   },
+  "lc_channel_matching": {
+    "title": "LC Job Channel Matching",
+    "description": "Detects job/role feedback columns (e.g. 'Artistic Directors (AD): Audrey, Jackson') and matches them to workspace #job-* Slack channels using the channels:read and chat:write.public scopes.",
+    "tip": "Click 'Fetch Slack Channels' to auto-match #job-* channels, adjust any dropdowns as needed, and save mappings for future forms."
+  },
   "comments_overview": {
     "title": "Step 3: Sample & Comment Preview",
     "description": "Inspect the exact formatted Slack direct message that each member will receive before dispatching anything.",

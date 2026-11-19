@@ -1,4 +1,5 @@
 import os
+import re
 import json
 import time
 import io
@@ -166,13 +167,82 @@ def is_excluded_group_header(header: str, exclude_terms=None) -> bool:
     return False
 
 
+def detect_job_columns(headers, known_members=None):
+    """
+    Detects job/role feedback columns in LC-mode Job Feedback forms.
+    Expected header formats:
+      - 'Artistic Directors (AD): Audrey, Jackson'
+      - 'Historian: Jackson, Mika'
+      - 'Webmaster: Lue'
+    Returns list of dicts with col_idx (1-based), header, role_title, abbrev, holders, display_label.
+    """
+    known_set = {m.strip().lower() for m in (known_members or []) if m and str(m).strip()}
+    pd_skip_terms = {"group", "individual", "indiv", "solo", "feedback", "comments", "notes", "timestamp"}
+    job_cols = []
+
+    for col_idx, raw_h in enumerate(headers, 1):
+        if not raw_h:
+            continue
+        h = str(raw_h).strip()
+        h_lower = h.lower()
+
+        if not h or h_lower == "timestamp" or ":" not in h:
+            continue
+        if h.endswith("?") and h.index(":") > len(h) - 10:
+            continue
+
+        left, right = h.split(":", 1)
+        left_clean = left.strip()
+        right_clean = right.strip()
+        if not left_clean or not right_clean:
+            continue
+
+        # Parse candidate holders on the right side
+        holder_tokens = [
+            tok.strip() for tok in re.split(r"[,&/]+|\band\b", right_clean, flags=re.IGNORECASE)
+            if tok and tok.strip()
+        ]
+        if not holder_tokens:
+            continue
+
+        # Check if right-side tokens match known members or look like short person names
+        matched_known = sum(1 for t in holder_tokens if t.lower() in known_set)
+        looks_like_names = all(1 <= len(t.split()) <= 2 and t.replace("-", "").replace("'", "").isalpha() for t in holder_tokens)
+        left_has_pd_term = any(re.search(r"\b" + re.escape(pt) + r"\b", left_clean.lower()) for pt in pd_skip_terms)
+
+        is_job = False
+        if known_set and matched_known >= 1:
+            is_job = True
+        elif looks_like_names and not left_has_pd_term and len(holder_tokens) <= 8:
+            is_job = True
+
+        if not is_job:
+            continue
+
+        abbrev_match = re.search(r"\(([^)]+)\)", left_clean)
+        abbrev = abbrev_match.group(1).strip() if abbrev_match else ""
+        role_title = re.sub(r"\([^)]*\)", "", left_clean).strip()
+        display_label = f"{role_title} ({abbrev})" if abbrev else role_title
+
+        job_cols.append({
+            "col_idx": col_idx,
+            "header": h,
+            "role_title": role_title,
+            "abbrev": abbrev,
+            "holders": holder_tokens,
+            "display_label": display_label
+        })
+
+    return job_cols
+
+
 def detect_spreadsheet_mode(headers, known_members, group_terms=None, indiv_terms=None, exclude_terms=None):
     """
     Automatically detects whether a spreadsheet is 'LC' or 'PD' mode based on headers.
     Returns:
     - detected_mode: "LC" or "PD"
     - reason: explanation string
-    - details: dict with counts and matching columns
+    - details: dict with counts, matching columns, and lc_subtype ("members" or "job_channels")
     """
     if group_terms is None:
         group_terms = ["Group", "Ensemble", "Feedback", "Comments", "Notes", "Arashi", "Three Sizz", "3 Sizzlin"]
@@ -184,31 +254,43 @@ def detect_spreadsheet_mode(headers, known_members, group_terms=None, indiv_term
             indiv_terms = ["Individual", "Indiv", "Solo"]
 
     all_pd_terms = list(group_terms) + list(indiv_terms)
-    known_set = {m.strip().lower() for m in known_members if m.strip()}
+    known_set = {m.strip().lower() for m in (known_members or []) if m and str(m).strip()}
     lc_matches = [h for h in headers if h and h.strip().lower() in known_set]
+    job_matches = detect_job_columns(headers, known_members=known_members)
     pd_matches = [
         h for h in headers
         if h and not is_excluded_group_header(h, exclude_terms=exclude_terms) and any(t.lower() in h.lower() for t in all_pd_terms)
     ]
 
-    if len(lc_matches) >= 3 and len(lc_matches) > len(pd_matches):
+    lc_subtype = "members"
+    if len(job_matches) >= 3 and len(job_matches) >= len(lc_matches):
+        mode = "LC"
+        lc_subtype = "job_channels"
+        reason = f"Detected {len(job_matches)} job/role columns for channel feedback (Job Channel LC Mode)."
+    elif len(lc_matches) >= 3 and len(lc_matches) > len(pd_matches):
         mode = "LC"
         reason = f"Detected {len(lc_matches)} individual member columns matching name list."
     elif len(pd_matches) > 0:
         mode = "PD"
         reason = f"Detected {len(pd_matches)} group/performance feedback columns matching search terms."
     else:
-        if len(lc_matches) > 0:
+        if len(job_matches) > 0:
+            mode = "LC"
+            lc_subtype = "job_channels"
+            reason = f"Found {len(job_matches)} job/role column match(es)."
+        elif len(lc_matches) > 0:
             mode = "LC"
             reason = f"Found {len(lc_matches)} member column match(es)."
         else:
             mode = "PD"
             reason = "Defaulted to PD mode (no clear member columns found)."
 
-    return mode, reason, {"lc_matches": lc_matches, "pd_matches": pd_matches}
-
-
-import re
+    return mode, reason, {
+        "lc_matches": lc_matches,
+        "pd_matches": pd_matches,
+        "job_matches": job_matches,
+        "lc_subtype": lc_subtype
+    }
 
 STOP_WORDS = {
     'group', 'individual', 'feedback', 'comments', 'please', 'include', 'write',
@@ -337,9 +419,7 @@ OBJECT_PREPOSITIONS = {
 NAME_ALIASES = {
     'johnathan': 'jonathan',
     'isssaaaaaaa': 'issa',
-    'issaaaa': 'issa',
-    'miggy': 'miguel',
-    'nathaniel': 'nathaniel'
+    'issaaaa': 'issa'
 }
 
 
@@ -821,10 +901,11 @@ def render_slack_dm_html(sender_name, recipient_name, recipient_id, message_text
 
     escaped = html.escape(message_text.strip())
 
-    # Replace horizontal divider lines (---, ‾‾‾, ___, ===)
+    # Replace horizontal divider lines (---, ‾‾‾, ___, ===) and absorb adjacent single newlines
+    # so block-level <div> dividers don't get extra <br> padding
     escaped = re.sub(
-        r'^[ \t]*[-_‾—=]{3,}[ \t]*$',
-        f'<div style="height: 1px; background-color: {hr_color}; margin: 12px 0;"></div>',
+        r'\n?[ \t]*[-_‾—=]{3,}[ \t]*\n?',
+        f'<div style="height: 1px; background-color: {hr_color}; margin: 6px 0;"></div>',
         escaped,
         flags=re.MULTILINE
     )
@@ -852,17 +933,17 @@ def render_slack_dm_html(sender_name, recipient_name, recipient_id, message_text
                 To: <span style="font-weight: 600; color: {'#38bdf8' if theme == 'dark' else '#0284c7'};">@{recipient_name}</span> ({recipient_id or 'NO_SLACK_ID'})
             </div>
         </div>
-        <div style="padding: 16px; display: flex; align-items: flex-start; gap: 12px;">
+        <div style="padding: 14px 16px; display: flex; align-items: flex-start; gap: 12px;">
             <div style="width: 40px; height: 40px; border-radius: 8px; background: linear-gradient(135deg, #4a154b, #611f69); display: flex; align-items: center; justify-content: center; font-size: 22px; flex-shrink: 0; box-shadow: 0 1px 3px rgba(0,0,0,0.2);">
                 🥁
             </div>
             <div style="flex-grow: 1; min-width: 0;">
-                <div style="display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px;">
+                <div style="display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px;">
                     <span style="font-weight: 900; font-size: 15px; color: {'#ffffff' if theme == 'dark' else '#1d1c1d'};">{sender_name}</span>
                     <span style="background: {badge_bg}; color: {badge_color}; font-size: 10px; font-weight: 700; padding: 1px 5px; border-radius: 3px;">APP</span>
                     <span style="font-size: 12px; color: {meta_color};">Today at {time_str}</span>
                 </div>
-                <div style="font-size: 14.5px; line-height: 1.55; color: {text_color}; word-break: break-word;">
+                <div style="font-size: 14.5px; line-height: 1.4; color: {text_color}; word-break: break-word;">
                     {escaped}
                 </div>
             </div>
@@ -1015,7 +1096,34 @@ def send_slack_message(token, api_url, user_id, message_text, max_retries=3):
                 return True, result.get('ts', 'ok')
 
             error = result.get('error', 'unknown_error')
-            if error in ('invalid_auth', 'channel_not_found', 'user_not_found', 'not_in_channel', 'account_inactive'):
+            if error == 'not_in_channel':
+                scopes_hdr = resp.headers.get('X-OAuth-Scopes', '')
+                active_scopes = [s.strip() for s in scopes_hdr.split(',') if s.strip()]
+
+                # Try auto-joining if channels:join is available
+                if 'channels:join' in active_scopes:
+                    try:
+                        join_url = f"{api_url.rstrip('/')}/conversations.join"
+                        join_resp = requests.post(join_url, headers=headers, json={'channel': user_id}, timeout=10)
+                        if join_resp.json().get('ok'):
+                            retry_resp = requests.post(url, headers=headers, json=payload, timeout=10)
+                            retry_res = retry_resp.json()
+                            if retry_res.get('ok'):
+                                return True, retry_res.get('ts', 'ok')
+                    except Exception:
+                        pass
+
+                if active_scopes and 'chat:write.public' not in active_scopes:
+                    return False, (
+                        f"Fatal Slack error: not_in_channel (`chat:write.public` is NOT active on this token; "
+                        f"active scopes: `{', '.join(active_scopes)}`). Click **Reinstall to Workspace** in Slack OAuth & Permissions."
+                    )
+                return False, (
+                    "Fatal Slack error: not_in_channel (`chat:write.public` only covers unrestricted public channels; "
+                    "if this channel is private or restricted, invite the bot via `/invite @ST SlackBot`)."
+                )
+
+            if error in ('invalid_auth', 'channel_not_found', 'user_not_found', 'account_inactive'):
                 return False, f"Fatal Slack error: {error}"
 
         except requests.exceptions.RequestException as e:
@@ -1028,3 +1136,256 @@ def send_slack_message(token, api_url, user_id, message_text, max_retries=3):
         time.sleep(wait_time)
 
     return False, f"Failed after {max_retries} attempts: {result.get('error', 'Unknown Error')}"
+
+
+def load_channel_map(filepath="channel_map.json"):
+    """Load saved job-role-to-Slack-channel mapping from JSON file."""
+    if not os.path.exists(filepath):
+        return {}
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def save_channel_map(channel_map, filepath="channel_map.json"):
+    """Save job-role-to-Slack-channel mapping to JSON file. Returns (success: bool)."""
+    try:
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(channel_map, f, indent=4)
+        return True
+    except OSError:
+        return False
+
+
+def fetch_slack_channels(token, api_url="https://slack.com/api/", types="public_channel"):
+    """
+    Fetches all non-archived Slack channels from the workspace via conversations.list.
+    Requires the `channels:read` Bot Token Scope (and `groups:read` if private channels are included).
+    Returns:
+      - (True, list of channel dicts: [{'id', 'name', 'is_private', 'num_members', 'topic'}])
+      - (False, error_message_str)
+    """
+    if not token or not str(token).strip():
+        return False, "Slack Bot Token is not configured."
+
+    clean_token = str(token).strip()
+    url = f"{api_url.rstrip('/')}/conversations.list"
+    headers = {
+        "Authorization": f"Bearer {clean_token}",
+        "Content-Type": "application/json; charset=utf-8"
+    }
+
+    channels = []
+    cursor = None
+
+    try:
+        while True:
+            params = {
+                "types": types,
+                "exclude_archived": "true",
+                "limit": 200
+            }
+            if cursor:
+                params["cursor"] = cursor
+
+            resp = requests.get(url, headers=headers, params=params, timeout=12)
+            data = resp.json()
+
+            if not data.get("ok"):
+                err = data.get("error", "Unknown error")
+                if err == "missing_scope":
+                    needed = data.get("needed", "channels:read")
+                    return False, (
+                        f"Missing required Slack OAuth scope: `{needed}`.\n\n"
+                        f"To enable this:\n"
+                        f"1. Go to your Slack App dashboard at https://api.slack.com/apps\n"
+                        f"2. Navigate to **OAuth & Permissions** → **Scopes** → **Bot Token Scopes**\n"
+                        f"3. Add the `{needed}` scope (and `chat:write.public` to post to public channels).\n"
+                        f"4. Click **Reinstall to Workspace** at the top of the OAuth page."
+                    )
+                elif err in ("invalid_auth", "token_revoked", "account_inactive"):
+                    return False, f"Slack Authentication error: `{err}`. Please verify your bot token."
+                return False, f"Slack API error: `{err}`"
+
+            for ch in data.get("channels", []):
+                ch_id = ch.get("id", "").strip()
+                ch_name = ch.get("name", "").strip()
+                if not ch_id or not ch_name:
+                    continue
+                channels.append({
+                    "id": ch_id,
+                    "name": ch_name,
+                    "is_private": bool(ch.get("is_private", False)),
+                    "num_members": ch.get("num_members", 0),
+                    "topic": (ch.get("topic") or {}).get("value", "").strip()
+                })
+
+            cursor = data.get("response_metadata", {}).get("next_cursor")
+            if not cursor:
+                break
+
+        # Sort #job-* channels first alphabetically, then other channels alphabetically
+        channels.sort(key=lambda c: (0 if c["name"].lower().startswith("job-") else 1, c["name"].lower()))
+        return True, channels
+
+    except requests.exceptions.RequestException as e:
+        return False, f"Network error connecting to Slack API: {e}"
+    except Exception as e:
+        return False, f"Unexpected error while fetching Slack channels: {e}"
+
+
+_JOB_GENERIC_WORDS = {
+    "coordinator", "coordinators", "coord", "director", "directors",
+    "officer", "officers", "and", "of", "the", "for"
+}
+
+
+def auto_match_job_channel(job_info, channels):
+    """
+    Matches a detected job column dict (from detect_job_columns) against fetched Slack channels.
+    Prioritizes channels prefixed with `#job-` / `#jobs-`.
+    Returns the best matching channel dict, or None if no confident match is found.
+    """
+    if not job_info or not channels:
+        return None
+
+    role_title = str(job_info.get("role_title", "")).strip()
+    abbrev = str(job_info.get("abbrev", "")).strip()
+
+    # Build normalized candidate keys from role_title and abbrev
+    candidates = []
+    if abbrev:
+        ab_norm = re.sub(r"[^a-z0-9]", "", abbrev.lower())
+        if ab_norm:
+            candidates.append((ab_norm, 120))
+            if ab_norm.endswith("s") and len(ab_norm) > 2:
+                candidates.append((ab_norm[:-1], 118))
+
+    role_lower = role_title.lower()
+    role_full_norm = re.sub(r"[^a-z0-9]", "", role_lower)
+    if role_full_norm:
+        candidates.append((role_full_norm, 108))
+
+    # Strip generic role words like "Coordinator", "Director", "Coord"
+    role_words = [w for w in re.findall(r"[a-z0-9]+", role_lower) if w not in _JOB_GENERIC_WORDS]
+    if role_words:
+        stripped_norm = "".join(role_words)
+        candidates.append((stripped_norm, 112))
+        if stripped_norm.endswith("s") and len(stripped_norm) > 3:
+            candidates.append((stripped_norm[:-1], 106))
+        for w in role_words:
+            if len(w) >= 3:
+                candidates.append((w, 90))
+
+    best_channel = None
+    best_score = 0
+
+    for ch in channels:
+        ch_name = ch.get("name", "").lower().strip()
+        is_job_prefixed = ch_name.startswith("job-") or ch_name.startswith("jobs-")
+        ch_core = re.sub(r"^jobs?[-_]", "", ch_name)
+        ch_norm = re.sub(r"[^a-z0-9]", "", ch_core)
+        ch_tokens = [t for t in re.findall(r"[a-z0-9]+", ch_core) if t]
+
+        if not ch_norm:
+            continue
+
+        prefix_bonus = 15 if is_job_prefixed else 0
+        score = 0
+
+        for key, base_weight in candidates:
+            if ch_norm == key:
+                score = max(score, base_weight + prefix_bonus)
+            elif len(key) >= 3 and len(ch_norm) >= 3:
+                # Handle pluralization or short prefix (e.g. "pub" vs "publicity", "workshop" vs "workshops")
+                if ch_norm.startswith(key) or key.startswith(ch_norm):
+                    ratio = min(len(ch_norm), len(key)) / max(len(ch_norm), len(key))
+                    if ratio >= 0.4 or (len(ch_norm) >= 3 and key.startswith(ch_norm)):
+                        score = max(score, int(base_weight * 0.8) + prefix_bonus)
+                elif key in ch_tokens:
+                    score = max(score, 75 + prefix_bonus)
+
+        if score > best_score:
+            best_score = score
+            best_channel = ch
+
+    return best_channel if best_score >= 70 else None
+
+
+def auto_match_job_channels(job_columns, channels):
+    """
+    Matches all detected job columns to Slack channels.
+    Returns dict {col_idx: channel_dict_or_None}.
+    """
+    return {job["col_idx"]: auto_match_job_channel(job, channels) for job in job_columns}
+
+
+def parse_lc_channel_comments(sheet, channel_configs, header_title=""):
+    """
+    Parses LC Job Feedback columns into per-channel messages.
+    channel_configs is a list of dicts:
+      [
+          {
+              "col_idx": int,
+              "job_name": str,
+              "channel_id": str,
+              "channel_name": str,
+              "include": bool
+          }, ...
+      ]
+    Returns:
+      - comments_by_target: dict {target_label: joined_comments_str}
+      - full_message_by_target: dict {target_label: formatted_slack_string}
+      - target_id_map: dict {target_label: channel_id}
+    """
+    comments_by_target = {}
+    full_message_by_target = {}
+    target_id_map = {}
+
+    clean_base_title = ""
+    if header_title and str(header_title).strip():
+        t = str(header_title).strip().strip("*").strip()
+        clean_base_title = t.replace("(Responses)", "").replace("  ", " ").strip()
+        if "feedback" not in clean_base_title.lower():
+            clean_base_title += " Feedback"
+
+    max_r = sheet.max_row or 0
+
+    for cfg in channel_configs:
+        if not cfg.get("include", True):
+            continue
+        col_idx = cfg.get("col_idx")
+        ch_id = (cfg.get("channel_id") or "").strip()
+        ch_name = (cfg.get("channel_name") or "").strip().lstrip("#")
+        job_name = (cfg.get("job_name") or f"Column {col_idx}").strip()
+
+        if not col_idx or (not ch_id and not ch_name):
+            continue
+
+        target_label = f"#{ch_name}" if ch_name else ch_id
+        inline_title = f"{clean_base_title} ({job_name})" if clean_base_title else job_name
+        header_block = f"*{inline_title}*\n{'=' * 32}\n"
+
+        col_comments = []
+        for r in range(2, max_r + 1):
+            val = sheet.cell(row=r, column=col_idx).value
+            if val is not None and str(val).strip():
+                col_comments.append(str(val).strip())
+
+        if not col_comments:
+            continue
+
+        joined = "\n______________________________\n".join(col_comments)
+
+        # Avoid key collision if two job columns map to the same channel
+        if target_label in comments_by_target:
+            comments_by_target[target_label] += f"\n______________________________\n*{job_name}*\n{joined}"
+            full_message_by_target[target_label] = f"{header_block}{comments_by_target[target_label]}".strip()
+        else:
+            comments_by_target[target_label] = joined
+            full_message_by_target[target_label] = f"{header_block}{joined}".strip()
+            target_id_map[target_label] = ch_id
+
+    return comments_by_target, full_message_by_target, target_id_map

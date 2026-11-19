@@ -408,6 +408,21 @@ if "name_list_source" not in st.session_state:
 if "guide_mode" not in st.session_state:
     st.session_state["guide_mode"] = False
 
+if "lc_subtype" not in st.session_state:
+    st.session_state["lc_subtype"] = "members"
+
+if "slack_channels" not in st.session_state:
+    st.session_state["slack_channels"] = []
+
+if "channel_configs" not in st.session_state:
+    st.session_state["channel_configs"] = []
+
+if "channel_target_ids" not in st.session_state:
+    st.session_state["channel_target_ids"] = {}
+
+if "channel_map" not in st.session_state:
+    st.session_state["channel_map"] = bot_logic.load_channel_map()
+
 if "current_step" not in st.session_state:
     st.session_state["current_step"] = 1
 
@@ -472,16 +487,62 @@ def clear_group_gui_state():
         if any(k.startswith(prefix) for prefix in (
             "members_", "input_add_", "btn_add_", "multiselect_group_",
             "g_col_", "i_col_", "name_", "title_", "custom_name_",
-            "btn_detect_", "del_group_", "btn_clr_", "add_miss_"
+            "btn_detect_", "del_group_", "btn_clr_", "add_miss_",
+            "ch_inc_", "ch_sel_", "ch_manual_id_", "ch_manual_name_"
         ))
     ]
     for k in keys_to_clear:
         del st.session_state[k]
     st.session_state["group_configs"] = []
+    st.session_state["channel_configs"] = []
+    st.session_state["channel_target_ids"] = {}
     st.session_state["parsed_comments"] = {}
     st.session_state["full_messages"] = {}
     st.session_state["selected_recipient_idx"] = 0
     st.session_state["has_assigned_names"] = False
+
+
+def get_target_slack_id(target_key):
+    """Resolve Slack User ID or Channel ID depending on active mode/subtype."""
+    if config.mode == "LC" and st.session_state.get("lc_subtype") == "job_channels":
+        return st.session_state.get("channel_target_ids", {}).get(target_key, "")
+    return st.session_state["name_dict"].get(target_key, "")
+
+
+def init_channel_configs(job_matches):
+    """Build channel_configs from detected job columns using saved channel_map or auto-match."""
+    saved_map = st.session_state.get("channel_map", {})
+    slack_channels = st.session_state.get("slack_channels", [])
+    auto_matched = bot_logic.auto_match_job_channels(job_matches, slack_channels) if slack_channels else {}
+
+    configs = []
+    for job in job_matches:
+        c_idx = job["col_idx"]
+        label = job["display_label"]
+        ch_id = ""
+        ch_name = ""
+
+        # Priority: auto-matched live Slack channel > saved channel_map.json
+        matched_ch = auto_matched.get(c_idx)
+        if matched_ch:
+            ch_id = matched_ch["id"]
+            ch_name = matched_ch["name"]
+        elif label in saved_map:
+            ch_id = saved_map[label].get("channel_id", "")
+            ch_name = saved_map[label].get("channel_name", "")
+
+        configs.append({
+            "col_idx": c_idx,
+            "header": job["header"],
+            "job_name": label,
+            "role_title": job["role_title"],
+            "abbrev": job["abbrev"],
+            "holders": job["holders"],
+            "channel_id": ch_id,
+            "channel_name": ch_name,
+            "include": True
+        })
+    return configs
 
 
 def trigger_parse_comments(sheet):
@@ -511,12 +572,24 @@ def trigger_parse_comments(sheet):
             comments, msgs = bot_logic.parse_pd_comments(sheet, st.session_state["group_configs"], header_title=header_title)
             st.session_state["parsed_comments"] = comments
             st.session_state["full_messages"] = msgs
+            st.session_state["channel_target_ids"] = {}
             st.session_state["last_parsed_mode"] = "PD"
     elif config.mode == "LC":
-        comments, msgs = bot_logic.parse_lc_comments(sheet, name_list, header_title=header_title)
-        st.session_state["parsed_comments"] = comments
-        st.session_state["full_messages"] = msgs
-        st.session_state["last_parsed_mode"] = "LC"
+        if st.session_state.get("lc_subtype") == "job_channels":
+            ch_cfgs = st.session_state.get("channel_configs", [])
+            comments, msgs, target_ids = bot_logic.parse_lc_channel_comments(
+                sheet, ch_cfgs, header_title=header_title
+            )
+            st.session_state["parsed_comments"] = comments
+            st.session_state["full_messages"] = msgs
+            st.session_state["channel_target_ids"] = target_ids
+            st.session_state["last_parsed_mode"] = "LC_channels"
+        else:
+            comments, msgs = bot_logic.parse_lc_comments(sheet, name_list, header_title=header_title)
+            st.session_state["parsed_comments"] = comments
+            st.session_state["full_messages"] = msgs
+            st.session_state["channel_target_ids"] = {}
+            st.session_state["last_parsed_mode"] = "LC_members"
 
 
 # -----------------------------------------------------------------------------
@@ -946,7 +1019,7 @@ if active_step == 1:
 
                     # Auto-detection
                     all_known = list(st.session_state["name_dict"].keys())
-                    detected_mode, detect_reason, _ = bot_logic.detect_spreadsheet_mode(
+                    detected_mode, detect_reason, detect_details = bot_logic.detect_spreadsheet_mode(
                         headers, all_known, config.group_search_list, config.indiv_search_list, config.exclude_search_list
                     )
                     st.session_state["detected_mode"] = detected_mode
@@ -959,11 +1032,14 @@ if active_step == 1:
                         st.session_state["message_header_text"] = default_title
                         st.session_state["input_message_header"] = default_title
                         clear_group_gui_state()
+                        st.session_state["lc_subtype"] = detect_details.get("lc_subtype", "members")
                         if config.mode != detected_mode:
                             config.mode = detected_mode
                             cfg = config.load_config()
                             cfg["mode"] = detected_mode
                             config.save_config(cfg)
+                        if config.mode == "LC" and st.session_state["lc_subtype"] == "job_channels":
+                            st.session_state["channel_configs"] = init_channel_configs(detect_details.get("job_matches", []))
                         if config.mode == "PD":
                             paired, _, _ = bot_logic.detect_groups_pd(
                                 headers, config.group_search_list, config.indiv_search_list, config.exclude_search_list
@@ -1056,7 +1132,12 @@ if active_step == 1:
     # Step 1 Bottom Navigation
     st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
     if "sheet" in st.session_state:
-        target_step_title = "Review Groups" if config.mode == "PD" else "Review Columns"
+        if config.mode == "PD":
+            target_step_title = "Review Groups"
+        elif st.session_state.get("lc_subtype") == "job_channels":
+            target_step_title = "Match Channels"
+        else:
+            target_step_title = "Review Columns"
         if st.session_state.get("guide_mode"):
             st.markdown(f"<div style='font-size:0.82rem; color:#6366f1; margin-bottom:4px;'>Proceed Action: {gb('parse_proceed_button')}</div>", unsafe_allow_html=True)
         if st.button(f"Continue to Step 2: {target_step_title} ➡️", type="primary", use_container_width=True):
@@ -1461,24 +1542,218 @@ elif active_step == 2:
                     st.rerun()
 
         elif config.mode == "LC":
-            st.markdown(f"### 📋 Step 2: Review Member Columns (LC Mode) {gb('lc_overview')}", unsafe_allow_html=True)
-            st.caption("In LC mode, columns in the spreadsheet are mapped directly to member names.")
+            lc_sub_options = ["members", "job_channels"]
+            current_lc_sub = st.session_state.get("lc_subtype", "members")
+            if current_lc_sub not in lc_sub_options:
+                current_lc_sub = "members"
 
-            matched_columns = []
-            for col_idx, h in enumerate(headers, 1):
-                if h.lower().strip() in all_known_members:
-                    matched_columns.append({"Column": f"Col {col_idx}", "Header": h, "Matched Member": h.lower().strip()})
+            selected_lc_sub = st.radio(
+                "LC Feedback Target Type",
+                options=lc_sub_options,
+                index=lc_sub_options.index(current_lc_sub),
+                format_func=lambda x: "👤 Member DMs (columns = member names)" if x == "members" else "📢 Job Channels (columns = #job-* channels)",
+                horizontal=True,
+                key="radio_lc_subtype"
+            )
+            if selected_lc_sub != st.session_state.get("lc_subtype"):
+                st.session_state["lc_subtype"] = selected_lc_sub
+                st.session_state["parsed_comments"] = {}
+                st.session_state["full_messages"] = {}
+                st.rerun()
 
-            if matched_columns:
-                st.success(f"Found {len(matched_columns)} columns matching member names.")
-                st.dataframe(pd.DataFrame(matched_columns), use_container_width=True)
+            if st.session_state["lc_subtype"] == "members":
+                st.markdown(f"### 📋 Step 2: Review Member Columns (LC Mode) {gb('lc_overview')}", unsafe_allow_html=True)
+                st.caption("In Member LC mode, columns in the spreadsheet are mapped directly to member names.")
 
-                matched_members_set = {col["Matched Member"] for col in matched_columns}
-                unmatched_lc = [m for m in all_known_members if m not in matched_members_set]
-                if unmatched_lc:
-                    st.warning(f"⚠️ **{len(unmatched_lc)} member(s) in `name_list.json` without a feedback column:** {', '.join([f'`{m}`' for m in unmatched_lc])}")
+                matched_columns = []
+                for col_idx, h in enumerate(headers, 1):
+                    if h.lower().strip() in all_known_members:
+                        matched_columns.append({"Column": f"Col {col_idx}", "Header": h, "Matched Member": h.lower().strip()})
+
+                if matched_columns:
+                    st.success(f"Found {len(matched_columns)} columns matching member names.")
+                    st.dataframe(pd.DataFrame(matched_columns), use_container_width=True)
+
+                    matched_members_set = {col["Matched Member"] for col in matched_columns}
+                    unmatched_lc = [m for m in all_known_members if m not in matched_members_set]
+                    if unmatched_lc:
+                        st.warning(f"⚠️ **{len(unmatched_lc)} member(s) in `name_list.json` without a feedback column:** {', '.join([f'`{m}`' for m in unmatched_lc])}")
+                else:
+                    st.warning("No columns in this spreadsheet directly match member names in name_list.json.")
+
             else:
-                st.warning("No columns in this spreadsheet directly match member names in name_list.json.")
+                st.markdown(f"### 📢 Step 2: Channel Matching (LC Job Feedback) {gb('lc_channel_matching')}", unsafe_allow_html=True)
+                st.caption("Match each job feedback column to its Slack channel (e.g. `#job-ad`, `#job-pd`, `#job-lc`, `#job-coco`).")
+
+                if not st.session_state.get("channel_configs"):
+                    detected_jobs = bot_logic.detect_job_columns(headers, known_members=all_known_members)
+                    st.session_state["channel_configs"] = init_channel_configs(detected_jobs)
+
+                # Top Action Bar
+                c_ch1, c_ch2, c_ch3 = st.columns(3)
+                with c_ch1:
+                    if st.button("🔄 Fetch Slack Channels", use_container_width=True, help="Load public channels from Slack (requires channels:read)"):
+                        active_tok = get_active_token()
+                        with st.spinner("Fetching Slack channels..."):
+                            ok, res = bot_logic.fetch_slack_channels(active_tok, config.slack_api_url)
+                        if ok:
+                            st.session_state["slack_channels"] = res
+                            # Auto-match any currently unmatched job columns
+                            ch_cfgs = st.session_state.get("channel_configs", [])
+                            auto_res = bot_logic.auto_match_job_channels(ch_cfgs, res)
+                            for cfg_item in ch_cfgs:
+                                c_i = cfg_item["col_idx"]
+                                if not cfg_item.get("channel_id") and auto_res.get(c_i):
+                                    m_ch = auto_res[c_i]
+                                    cfg_item["channel_id"] = m_ch["id"]
+                                    cfg_item["channel_name"] = m_ch["name"]
+                                    st.session_state.pop(f"ch_sel_{c_i}", None)
+                            job_ch_cnt = sum(1 for c in res if c["name"].lower().startswith("job-"))
+                            st.toast(f"Loaded {len(res)} channels ({job_ch_cnt} #job-* channels)!", icon="✅")
+                            st.rerun()
+                        else:
+                            st.error(res)
+
+                with c_ch2:
+                    if st.button("🪄 Auto-Match Channels", use_container_width=True, disabled=not st.session_state.get("slack_channels"), help="Re-run smart matching against fetched Slack channels"):
+                        sl_channels = st.session_state.get("slack_channels", [])
+                        ch_cfgs = st.session_state.get("channel_configs", [])
+                        auto_res = bot_logic.auto_match_job_channels(ch_cfgs, sl_channels)
+                        matched_cnt = 0
+                        for cfg_item in ch_cfgs:
+                            c_i = cfg_item["col_idx"]
+                            if auto_res.get(c_i):
+                                m_ch = auto_res[c_i]
+                                cfg_item["channel_id"] = m_ch["id"]
+                                cfg_item["channel_name"] = m_ch["name"]
+                                st.session_state.pop(f"ch_sel_{c_i}", None)
+                                matched_cnt += 1
+                        st.toast(f"Auto-matched {matched_cnt} of {len(ch_cfgs)} job columns!", icon="🪄")
+                        st.rerun()
+
+                with c_ch3:
+                    if st.button("💾 Save Channel Mappings", use_container_width=True, help="Save current job-to-channel mappings to channel_map.json"):
+                        new_map = dict(st.session_state.get("channel_map", {}))
+                        for cfg_item in st.session_state.get("channel_configs", []):
+                            if cfg_item.get("channel_id") or cfg_item.get("channel_name"):
+                                new_map[cfg_item["job_name"]] = {
+                                    "channel_id": cfg_item.get("channel_id", ""),
+                                    "channel_name": cfg_item.get("channel_name", "")
+                                }
+                        if bot_logic.save_channel_map(new_map):
+                            st.session_state["channel_map"] = new_map
+                            st.toast("Saved channel mappings to channel_map.json!", icon="💾")
+                        else:
+                            st.error("Failed to save channel_map.json.")
+
+                slack_channels = st.session_state.get("slack_channels", [])
+                if slack_channels:
+                    job_ch_count = sum(1 for c in slack_channels if c["name"].lower().startswith("job-"))
+                    st.success(f"✅ Connected: **{len(slack_channels)}** Slack channels loaded (**{job_ch_count}** `#job-*` channels).")
+                else:
+                    st.info("💡 Click **Fetch Slack Channels** above to auto-match `#job-*` channels from Slack, or enter Channel IDs manually below.")
+
+                ch_configs = st.session_state.get("channel_configs", [])
+                if not ch_configs:
+                    st.warning("No job columns were auto-detected. You can add columns manually below.")
+                else:
+                    total_jobs = len(ch_configs)
+                    matched_jobs = sum(1 for c in ch_configs if c.get("include", True) and c.get("channel_id"))
+                    unmatched_jobs = [c["job_name"] for c in ch_configs if c.get("include", True) and not c.get("channel_id")]
+
+                    cm1, cm2, cm3 = st.columns(3)
+                    cm1.metric("Detected Job Columns", total_jobs)
+                    cm2.metric("Matched to Channels", matched_jobs)
+                    cm3.metric("Unmatched / Missing ID", len(unmatched_jobs), delta_color="inverse")
+
+                    if unmatched_jobs:
+                        st.warning(f"⚠️ **{len(unmatched_jobs)} active job column(s) unmatched:** {', '.join([f'`{j}`' for j in unmatched_jobs])}")
+
+                    ch_option_labels = ["(Unmatched / Skip)", "(Enter Channel ID manually)"] + [
+                        f"#{c['name']} ({c['id']})" for c in slack_channels
+                    ]
+                    ch_label_to_obj = {f"#{c['name']} ({c['id']})": c for c in slack_channels}
+                    max_r = sheet.max_row or 0
+
+                    for cfg_item in ch_configs:
+                        c_idx = cfg_item["col_idx"]
+                        comment_cnt = sum(
+                            1 for r in range(2, max_r + 1)
+                            if sheet.cell(row=r, column=c_idx).value is not None and str(sheet.cell(row=r, column=c_idx).value).strip()
+                        )
+                        with st.container(border=True):
+                            r_chk, r_info, r_sel = st.columns([0.5, 3.0, 3.5])
+                            with r_chk:
+                                inc_val = st.checkbox(
+                                    "Include",
+                                    value=cfg_item.get("include", True),
+                                    key=f"ch_inc_{c_idx}",
+                                    label_visibility="collapsed"
+                                )
+                                cfg_item["include"] = inc_val
+                            with r_info:
+                                st.markdown(f"**Col {c_idx}: {cfg_item['job_name']}**")
+                                holders_str = ", ".join(cfg_item.get("holders", [])) or "—"
+                                st.caption(f"Holders: {holders_str} • **{comment_cnt}** comment(s)")
+                            with r_sel:
+                                if slack_channels:
+                                    cur_id = cfg_item.get("channel_id", "")
+                                    cur_name = cfg_item.get("channel_name", "")
+                                    cur_label = f"#{cur_name} ({cur_id})" if cur_id and cur_name else "(Unmatched / Skip)"
+                                    if cur_label not in ch_option_labels:
+                                        cur_label = "(Enter Channel ID manually)" if cur_id else "(Unmatched / Skip)"
+
+                                    sel_lbl = st.selectbox(
+                                        f"Channel for {cfg_item['job_name']}",
+                                        options=ch_option_labels,
+                                        index=ch_option_labels.index(cur_label),
+                                        key=f"ch_sel_{c_idx}",
+                                        label_visibility="collapsed",
+                                        disabled=not inc_val
+                                    )
+                                    if sel_lbl == "(Unmatched / Skip)":
+                                        cfg_item["channel_id"] = ""
+                                        cfg_item["channel_name"] = ""
+                                    elif sel_lbl == "(Enter Channel ID manually)":
+                                        m_id = st.text_input("Channel ID (e.g. C0XXXXXXX)", value=cur_id, key=f"ch_manual_id_{c_idx}", disabled=not inc_val)
+                                        m_nm = st.text_input("Channel Name (e.g. job-ad)", value=cur_name, key=f"ch_manual_name_{c_idx}", disabled=not inc_val)
+                                        cfg_item["channel_id"] = m_id.strip()
+                                        cfg_item["channel_name"] = m_nm.strip().lstrip("#")
+                                    else:
+                                        chosen_ch = ch_label_to_obj[sel_lbl]
+                                        cfg_item["channel_id"] = chosen_ch["id"]
+                                        cfg_item["channel_name"] = chosen_ch["name"]
+                                else:
+                                    mc1, mc2 = st.columns(2)
+                                    with mc1:
+                                        m_nm = st.text_input("Channel Name", value=cfg_item.get("channel_name", ""), placeholder="e.g. #job-ad", key=f"ch_manual_name_{c_idx}", label_visibility="collapsed", disabled=not inc_val)
+                                    with mc2:
+                                        m_id = st.text_input("Channel ID", value=cfg_item.get("channel_id", ""), placeholder="e.g. C0XXXXXXX", key=f"ch_manual_id_{c_idx}", label_visibility="collapsed", disabled=not inc_val)
+                                    cfg_item["channel_name"] = m_nm.strip().lstrip("#")
+                                    cfg_item["channel_id"] = m_id.strip()
+
+                # Allow adding any non-detected column manually
+                existing_col_idxs = {c["col_idx"] for c in ch_configs}
+                remaining_cols = [(idx, h) for idx, h in enumerate(headers, 1) if h and idx not in existing_col_idxs]
+                if remaining_cols:
+                    with st.expander("➕ Add Another Column as Job Channel", expanded=False):
+                        add_col_choice = st.selectbox(
+                            "Select column to add:",
+                            options=remaining_cols,
+                            format_func=lambda x: f"Col {x[0]}: {x[1]}"
+                        )
+                        if st.button("Add Column", key="btn_add_job_col"):
+                            c_i, c_h = add_col_choice
+                            new_job = {
+                                "col_idx": c_i,
+                                "header": c_h,
+                                "role_title": c_h.split(":", 1)[0].strip(),
+                                "abbrev": "",
+                                "holders": [],
+                                "display_label": c_h.split(":", 1)[0].strip()
+                            }
+                            st.session_state["channel_configs"].extend(init_channel_configs([new_job]))
+                            st.rerun()
 
             st.markdown("<div style='height: 16px;'></div>", unsafe_allow_html=True)
             if st.session_state.get("guide_mode"):
@@ -1503,38 +1778,45 @@ elif active_step == 3:
     st.markdown(f"### 💬 Step 3: Review Sample Comments {gb('comments_overview')}", unsafe_allow_html=True)
     st.caption("Inspect the exact formatted Slack messages generated for each member before sending.")
 
-    mode_changed = st.session_state.get("last_parsed_mode") != config.mode
+    expected_parsed_mode = "PD" if config.mode == "PD" else ("LC_channels" if st.session_state.get("lc_subtype") == "job_channels" else "LC_members")
+    mode_changed = st.session_state.get("last_parsed_mode") != expected_parsed_mode
     if (not st.session_state.get("full_messages") or mode_changed) and "sheet" in st.session_state:
         trigger_parse_comments(st.session_state["sheet"])
 
+    is_job_ch_mode = config.mode == "LC" and st.session_state.get("lc_subtype") == "job_channels"
+    target_noun = "Channel" if is_job_ch_mode else "Member"
+
     full_msgs = st.session_state.get("full_messages", {})
     if not full_msgs:
-        st.warning("No comments generated yet. Please configure groups in Step 2 first.")
+        st.warning("No comments generated yet. Please configure groups or channels in Step 2 first.")
         if st.button("⬅️ Go to Step 2", use_container_width=True):
             go_to_step(2)
             st.rerun()
     else:
         recipients = sorted(list(full_msgs.keys()))
         total_recipients = len(recipients)
-        missing_ids = [r for r in recipients if not st.session_state["name_dict"].get(r)]
+        missing_ids = [r for r in recipients if not get_target_slack_id(r)]
 
         # Compact metric row
         if st.session_state.get("guide_mode"):
             st.markdown(f"<div style='font-size:0.8rem; color:#6366f1; margin-bottom:4px;'>Recipient Coverage Metrics: {gb('recipient_metrics')}</div>", unsafe_allow_html=True)
 
         c_m1, c_m2, c_m3 = st.columns(3)
-        c_m1.metric("Total Recipients", total_recipients)
+        c_m1.metric(f"Total {target_noun}s", total_recipients)
         c_m2.metric("Slack IDs Configured", f"{total_recipients - len(missing_ids)} / {total_recipients}")
         c_m3.metric("Missing Slack IDs", len(missing_ids), delta_color="inverse")
 
         if missing_ids:
-            st.warning(f"⚠️ {len(missing_ids)} member(s) have feedback but no Slack ID in name_list.json: {', '.join(missing_ids)}.")
+            if is_job_ch_mode:
+                st.warning(f"⚠️ {len(missing_ids)} channel(s) have feedback but no Channel ID matched: {', '.join(missing_ids)}.")
+            else:
+                st.warning(f"⚠️ {len(missing_ids)} member(s) have feedback but no Slack ID in name_list.json: {', '.join(missing_ids)}.")
 
         col_sel, col_rand = st.columns([3, 1])
         with col_sel:
-            st.markdown(f"**Select Member to Preview** {gb('recipient_selector')}", unsafe_allow_html=True)
+            st.markdown(f"**Select {target_noun} to Preview** {gb('recipient_selector')}", unsafe_allow_html=True)
             selected_person = st.selectbox(
-                "Select Member to Preview",
+                f"Select {target_noun} to Preview",
                 options=recipients,
                 index=st.session_state["selected_recipient_idx"] if st.session_state["selected_recipient_idx"] < len(recipients) else 0,
                 label_visibility="collapsed"
@@ -1547,7 +1829,7 @@ elif active_step == 3:
                 st.session_state["selected_recipient_idx"] = rand_idx
                 st.rerun()
 
-        slack_id = st.session_state["name_dict"].get(selected_person)
+        slack_id = get_target_slack_id(selected_person)
         msg_text = full_msgs[selected_person]
 
         # Tabbed preview: Clean Slack DM vs Raw Markdown vs Section Breakdown
@@ -1607,6 +1889,9 @@ elif active_step == 4:
             st.rerun()
     else:
         recipients = sorted(list(full_msgs.keys()))
+        is_job_ch_mode = config.mode == "LC" and st.session_state.get("lc_subtype") == "job_channels"
+        target_col_label = "Channel" if is_job_ch_mode else "Member"
+        target_id_label = "Slack Channel ID" if is_job_ch_mode else "Slack User ID"
 
         # 1. Recipient Checklist
         st.markdown(f"##### 1. Recipient Checklist {gb('recipient_checklist')}", unsafe_allow_html=True)
@@ -1614,11 +1899,11 @@ elif active_step == 4:
 
         recipient_status = []
         for r in recipients:
-            sid = st.session_state["name_dict"].get(r, "")
+            sid = get_target_slack_id(r)
             status = "Ready ✅" if sid else "Missing Slack ID ❌"
             recipient_status.append({
                 "Send": select_all and bool(sid),
-                "Member": r,
+                "Target": r,
                 "Slack ID": sid or "MISSING",
                 "Status": status,
                 "Char Count": len(full_msgs[r])
@@ -1629,8 +1914,8 @@ elif active_step == 4:
             df_recipients,
             column_config={
                 "Send": st.column_config.CheckboxColumn("Send?", default=True),
-                "Member": st.column_config.TextColumn("Member", disabled=True),
-                "Slack ID": st.column_config.TextColumn("Slack User ID", disabled=True),
+                "Target": st.column_config.TextColumn(target_col_label, disabled=True),
+                "Slack ID": st.column_config.TextColumn(target_id_label, disabled=True),
                 "Status": st.column_config.TextColumn("Status", disabled=True),
                 "Char Count": st.column_config.NumberColumn("Length", disabled=True)
             },
@@ -1639,7 +1924,7 @@ elif active_step == 4:
         )
 
         selected_rows = edited_recipients[edited_recipients["Send"] == True]
-        confirmed_recipients = selected_rows["Member"].tolist()
+        confirmed_recipients = selected_rows["Target"].tolist()
         st.caption(f"**{len(confirmed_recipients)}** of **{len(recipients)}** recipients selected for delivery.")
 
         # 2. Test Message
@@ -1675,8 +1960,9 @@ elif active_step == 4:
         # 3. Final Broadcast
         st.markdown("---")
         st.markdown(f"##### 2. Final Dispatch {gb('broadcast_confirmation')}", unsafe_allow_html=True)
+        dispatch_noun = "channels" if is_job_ch_mode else "members"
         confirm_checkbox = st.checkbox(
-            f"I confirm sending messages to all {len(confirmed_recipients)} selected members.",
+            f"I confirm sending messages to all {len(confirmed_recipients)} selected {dispatch_noun}.",
             value=False
         )
 
@@ -1684,7 +1970,7 @@ elif active_step == 4:
             st.markdown(f"<div style='font-size:0.82rem; color:#6366f1; margin-bottom:4px;'>Final Dispatch Action: {gb('broadcast_button')}</div>", unsafe_allow_html=True)
 
         if st.button(
-            f"🚀 Send Slack Messages to {len(confirmed_recipients)} Members",
+            f"🚀 Send Slack Messages to {len(confirmed_recipients)} {dispatch_noun.capitalize()}",
             type="primary",
             disabled=not confirm_checkbox or len(confirmed_recipients) == 0,
             use_container_width=True
@@ -1699,29 +1985,30 @@ elif active_step == 4:
 
             with log_container:
                 for idx, person in enumerate(confirmed_recipients):
-                    slack_id = st.session_state["name_dict"].get(person)
+                    slack_id = get_target_slack_id(person)
                     msg_body = full_msgs[person]
+                    disp_target = person if is_job_ch_mode else f"@{person}"
 
-                    status_text.text(f"Sending ({idx + 1}/{len(confirmed_recipients)}): @{person}...")
+                    status_text.text(f"Sending ({idx + 1}/{len(confirmed_recipients)}): {disp_target}...")
 
                     if not slack_id:
-                        st.write(f"❌ **@{person}**: Skipped - missing Slack ID")
+                        st.write(f"❌ **{disp_target}**: Skipped - missing Slack ID")
                         fail_count += 1
                         continue
 
                     ok, res = bot_logic.send_slack_message(active_tok, config.slack_api_url, slack_id, msg_body)
                     if ok:
-                        st.write(f"✅ **@{person}** (`{slack_id}`): Delivered")
+                        st.write(f"✅ **{disp_target}** (`{slack_id}`): Delivered")
                         success_count += 1
                     else:
-                        st.write(f"❌ **@{person}** (`{slack_id}`): Failed - {res}")
+                        st.write(f"❌ **{disp_target}** (`{slack_id}`): Failed - {res}")
                         fail_count += 1
 
                     progress_bar.progress((idx + 1) / len(confirmed_recipients))
 
             status_text.text("Finished!")
             if success_count > 0 and fail_count == 0:
-                st.success(f"🎉 Successfully delivered feedback to all {success_count} members!")
+                st.success(f"🎉 Successfully delivered feedback to all {success_count} {dispatch_noun}!")
             else:
                 st.warning(f"Completed: {success_count} succeeded, {fail_count} failed.")
 
